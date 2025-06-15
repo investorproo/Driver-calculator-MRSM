@@ -1038,15 +1038,15 @@ export default function App() {
         setNotification({
             message: 'Вы уверены, что хотите удалить эту поездку? Это действие необратимо.',
             type: 'confirm',
-            onConfirm: () => confirmDeleteTrip(),
+            onConfirm: () => confirmDeleteTrip(tripId),
             onCancel: closeNotification
         });
     }
 
-    const confirmDeleteTrip = async () => {
-        if (!userId || !deletingTripId) return;
+    const confirmDeleteTrip = async (tripId) => {
+        if (!userId || !tripId) return;
         try {
-            const tripRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`, deletingTripId);
+            const tripRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`, tripId);
             await deleteDoc(tripRef);
             setNotification({ message: 'Поездка удалена.', type: 'success' });
         } catch (error) {
@@ -1054,6 +1054,8 @@ export default function App() {
             setNotification({ message: 'Не удалось удалить поездку.', type: 'error' });
         } finally {
             setDeletingTripId(null);
+            // Закрываем модальное окно подтверждения
+            closeNotification(); 
         }
     };
 
@@ -1131,7 +1133,13 @@ export default function App() {
                     <NotificationModal 
                         message={notification.message} 
                         type={notification.type} 
-                        onConfirm={notification.onConfirm || closeNotification}
+                        onConfirm={() => {
+                           if (notification.type === 'confirm' && deletingTripId) {
+                               confirmDeleteTrip(deletingTripId);
+                           } else {
+                               closeNotification();
+                           }
+                        }}
                         onCancel={closeNotification} 
                     />
                 )}
