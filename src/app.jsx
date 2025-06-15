@@ -404,7 +404,6 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate, setNotification }) => {
     const [imageFile, setImageFile] = useState(null);
     const [imageBase64, setImageBase64] = useState('');
     const [isLoading, setIsLoading] = useState(false);
-    const [ocrResult, setOcrResult] = useState(null);
     const fileInputRef = React.useRef(null);
 
     const handleFileChange = (e) => {
@@ -414,7 +413,6 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate, setNotification }) => {
             const reader = new FileReader();
             reader.onloadend = () => {
                 setImageBase64(reader.result.split(',')[1]);
-                setOcrResult(null);
                 setNotification({ message: '' }); 
             };
             reader.readAsDataURL(file);
@@ -427,7 +425,6 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate, setNotification }) => {
             return;
         }
         setIsLoading(true);
-        setOcrResult(null);
         setNotification({ message: '' });
 
         try {
@@ -482,6 +479,7 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate, setNotification }) => {
         }
     };
     
+    // ИСПРАВЛЕНИЕ: Функция теперь автоматически вызывает onFuelExpenseUpdate
     const processOcrResult = (items) => {
         let totalAllDieselGallons = 0;
         let totalAllDieselCostBeforeDiscount = 0;
@@ -508,29 +506,15 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate, setNotification }) => {
         const finalAllDieselCostAfterDiscount = totalAllDieselCostBeforeDiscount - totalDiscountOnAllDiesel;
         const finalCombinedExpense = (finalAllDieselCostAfterDiscount > 0 ? finalAllDieselCostAfterDiscount : 0) + totalDefCost;
         
-        if (finalCombinedExpense <= 0) {
-            setNotification({ message: "Не удалось рассчитать итоговую сумму по чеку. Убедитесь, что на фото видны стоимость и галлоны.", type: 'error' });
-            return;
+        if (finalCombinedExpense > 0) {
+            onFuelExpenseUpdate(finalCombinedExpense);
+            setImageFile(null); // Сбрасываем файлы после успешного добавления
+            setImageBase64('');
+        } else {
+             setNotification({ message: "Не удалось рассчитать итоговую сумму по чеку. Убедитесь, что на фото видны стоимость и галлоны.", type: 'error' });
         }
-
-        setOcrResult({
-            totalAllDieselGallons,
-            totalAllDieselCostBeforeDiscount,
-            totalDefCost,
-            totalDiscountOnAllDiesel,
-            finalCombinedExpense
-        });
     };
     
-    const handleAddExpense = () => {
-        if(ocrResult && ocrResult.finalCombinedExpense > 0) {
-            onFuelExpenseUpdate(ocrResult.finalCombinedExpense);
-            setOcrResult(null);
-            setImageFile(null);
-            setImageBase64('');
-        }
-    }
-
     return (
         <Card>
             <h2 className="text-xl font-bold text-slate-800 dark:text-white flex items-center mb-2"><FileScan className="mr-2 text-purple-400"/>Чек на топливо <span className="text-sm font-normal text-slate-500 dark:text-slate-400 ml-2">(Экспериментально)</span></h2>
@@ -560,29 +544,6 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate, setNotification }) => {
                 <StyledButton onClick={handleRecognize} icon={Play} disabled={!imageBase64 || isLoading} className="bg-gradient-to-br from-purple-600 to-indigo-600">
                     {isLoading ? <><Loader2 className="animate-spin mr-2"/> Обработка...</> : "Распознать чек"}
                 </StyledButton>
-                
-                <AnimatePresence>
-                {ocrResult && (
-                    <motion.div 
-                        initial={{ opacity: 0, y: 10 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        className="mt-4 p-4 bg-slate-100 dark:bg-slate-900/70 rounded-xl border border-slate-200 dark:border-slate-700 space-y-2"
-                    >
-                        <h3 className="font-bold text-slate-800 dark:text-white text-lg">Детализация расчета по чеку</h3>
-                        <div className="text-sm text-slate-600 dark:text-slate-300 space-y-1">
-                           <p>Всего галлонов ДИЗЕЛЯ: <span className="font-semibold text-slate-900 dark:text-white">{ocrResult.totalAllDieselGallons.toFixed(3)}</span></p>
-                           <p>Общая стоимость ДИЗЕЛЯ (до скидки): <span className="font-semibold text-slate-900 dark:text-white">{formatCurrency(ocrResult.totalAllDieselCostBeforeDiscount)}</span></p>
-                           <p>Общая стоимость DEF: <span className="font-semibold text-slate-900 dark:text-white">{formatCurrency(ocrResult.totalDefCost)}</span></p>
-                           <p>Скидка на ВЕСЬ дизель (${DIESEL_DISCOUNT_PER_GALLON}/галлон): <span className="font-semibold text-red-600 dark:text-red-400">{formatCurrency(-ocrResult.totalDiscountOnAllDiesel)}</span></p>
-                           <hr className="border-slate-300 dark:border-slate-700 my-2" />
-                           <p className="text-base">Итого к добавлению в 'Топливо': <span className="font-bold text-lg text-green-600 dark:text-green-400">{formatCurrency(ocrResult.finalCombinedExpense)}</span></p>
-                        </div>
-                        <StyledButton onClick={handleAddExpense} icon={Plus} className="mt-4 bg-gradient-to-br from-green-600 to-teal-600">
-                            Добавить в 'Топливо'
-                        </StyledButton>
-                    </motion.div>
-                )}
-                </AnimatePresence>
             </div>
         </Card>
     );
@@ -682,7 +643,7 @@ const OverallSummary = ({ trips }) => {
 const TripListItem = ({ trip, onEdit, onDelete }) => {
     const tripDate = parseISO(trip.date);
     const formattedDate = isValid(tripDate) 
-        ? format(tripDate, "d MMMM yyyy 'г.'", { locale: ru })
+        ? format(tripDate, "d MMMM २०२२ 'г.'", { locale: ru })
         : "Неверная дата";
 
     return (
@@ -749,7 +710,7 @@ const TripsByPeriod = ({ trips, onEdit, onDelete }) => {
                  <button onClick={prevWeek} className="p-3 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"><ChevronsLeft /></button>
                  <div className="text-center">
                     <p className="font-semibold text-slate-800 dark:text-white">Неделя {getWeek(currentDate, { weekStartsOn: 1 })}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">{format(start, 'd MMM', { locale: ru })} - {format(end, 'd MMM yyyy', { locale: ru })}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{format(start, 'd MMM', { locale: ru })} - {format(end, 'd MMM २०२२', { locale: ru })}</p>
                  </div>
                  <button onClick={nextWeek} className="p-3 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"><ChevronsRight /></button>
             </div>
