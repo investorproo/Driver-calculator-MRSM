@@ -4,10 +4,10 @@ export default {
     "./index.html",
     "./src/**/*.{js,ts,jsx,tsx}",
   ],
+  // ИСПРАВЛЕНО: Добавлена эта строка для включения тем
   darkMode: 'class',
   theme: {
     extend: {},
   },
   plugins: [],
 }
-
