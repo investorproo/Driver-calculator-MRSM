@@ -831,6 +831,7 @@ export default function App() {
     const [newTripData, setNewTripData] = useState(INITIAL_TRIP_FORM_STATE);
     const [editingTrip, setEditingTrip] = useState(null);
     const [notification, setNotification] = useState({ message: '', type: '', onConfirm: null });
+    const [tripToDelete, setTripToDelete] = useState(null);
 
     useEffect(() => {
         const root = window.document.documentElement;
@@ -1033,30 +1034,40 @@ export default function App() {
     }
     
     const handleDeleteTrip = (tripId) => {
-        setNotification({
-            message: 'Вы уверены, что хотите удалить эту поездку? Это действие необратимо.',
-            type: 'confirm',
-            onConfirm: () => confirmDeleteAction(tripId)
-        });
+        setTripToDelete(tripId);
     }
-
-    const confirmDeleteAction = async (tripId) => {
-        if (!userId || !tripId) return;
+    
+    const confirmDeleteAction = async () => {
+        if (!userId || !tripToDelete) return;
         try {
-            const tripRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`, tripId);
+            const tripRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`, tripToDelete);
             await deleteDoc(tripRef);
             setNotification({ message: 'Поездка удалена.', type: 'success' });
         } catch (error) {
             console.error("Delete trip error:", error);
             setNotification({ message: 'Не удалось удалить поездку.', type: 'error' });
         } finally {
-            closeNotification();
+            setTripToDelete(null);
         }
     };
-
+    
     const closeNotification = () => {
-        setNotification({ message: '', type: '', onConfirm: null });
+        setNotification({ message: '', type: '' });
     };
+
+    useEffect(() => {
+        if(tripToDelete) {
+            setNotification({
+                message: 'Вы уверены, что хотите удалить эту поездку? Это действие необратимо.',
+                type: 'confirm',
+                onConfirm: confirmDeleteAction,
+                onCancel: () => {
+                    setTripToDelete(null);
+                    closeNotification();
+                }
+            });
+        }
+    }, [tripToDelete]);
 
     if (!areFirebaseKeysAvailable) {
         return (
@@ -1129,7 +1140,7 @@ export default function App() {
                         message={notification.message} 
                         type={notification.type} 
                         onConfirm={notification.onConfirm}
-                        onCancel={closeNotification} 
+                        onCancel={notification.onCancel || closeNotification} 
                     />
                 )}
             </AnimatePresence>
