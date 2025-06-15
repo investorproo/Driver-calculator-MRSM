@@ -824,13 +824,12 @@ export default function App() {
     const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
     const [activeTab, setActiveTab] = useState('entry');
     const [userId, setUserId] = useState(null);
-    const [userSettings, setUserSettings] = useState(DEFAULT_USER_SETTINGS);
+    const [userSettings, setUserSettings] = useState(null);
     const [trips, setTrips] = useState([]);
-    const [isLoading, setIsLoading] = useState(true);
     const [isAuthComplete, setIsAuthComplete] = useState(false);
     const [newTripData, setNewTripData] = useState(INITIAL_TRIP_FORM_STATE);
     const [editingTrip, setEditingTrip] = useState(null);
-    const [notification, setNotification] = useState({ message: '', type: '', onConfirm: null });
+    const [notification, setNotification] = useState({ message: '', type: '', onConfirm: null, onCancel: null });
 
     useEffect(() => {
         const root = window.document.documentElement;
@@ -843,36 +842,26 @@ export default function App() {
     }, [theme]);
 
     useEffect(() => {
-        if (!areFirebaseKeysAvailable) {
-            setIsLoading(false);
-            return;
-        }
+        if (!areFirebaseKeysAvailable) return;
 
-        const unsub = onAuthStateChanged(auth, async (authUser) => {
-            if (authUser) {
-                setUserId(authUser.uid);
+        return onAuthStateChanged(auth, async (user) => {
+            if (user) {
+                setUserId(user.uid);
             } else {
                 try {
-                    const initialToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
-                    if(initialToken){
-                       await signInWithCustomToken(auth, initialToken);
-                    } else {
-                       await signInAnonymously(auth);
-                    }
+                    await signInAnonymously(auth);
                 } catch (error) {
-                    console.error("Authentication error:", error);
+                    console.error("Anonymous sign-in error:", error);
                     setNotification({ message: 'Не удалось войти. Данные не будут сохраняться.', type: 'error' });
                 }
             }
             setIsAuthComplete(true);
         });
-
-        return () => unsub();
     }, []);
 
     useEffect(() => {
-        if (!isAuthComplete || !userId) {
-            if (isAuthComplete) setIsLoading(false);
+        if (!userId) {
+            if(isAuthComplete) setUserSettings(DEFAULT_USER_SETTINGS);
             return;
         };
 
@@ -886,11 +875,10 @@ export default function App() {
                 setDoc(settingsRef, DEFAULT_USER_SETTINGS);
                 setUserSettings(DEFAULT_USER_SETTINGS);
             }
-            setIsLoading(false);
         }, (error) => {
             console.error("Settings loading error:", error);
             setNotification({ message: 'Ошибка загрузки настроек.', type: 'error' });
-            setIsLoading(false);
+            setUserSettings(DEFAULT_USER_SETTINGS);
         });
 
         const tripsRef = collection(db, `${firestorePathPrefix}/trips`);
@@ -907,7 +895,7 @@ export default function App() {
             settingsUnsub();
             tripsUnsub();
         };
-    }, [isAuthComplete, userId]);
+    }, [userId, isAuthComplete]);
 
     const debouncedSaveSettings = useCallback(
         debounce((newSettings) => {
@@ -1041,6 +1029,7 @@ export default function App() {
     }
 
     const confirmDeleteAction = async (tripId) => {
+        closeNotification();
         if (!userId || !tripId) return;
         try {
             const tripRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`, tripId);
@@ -1049,15 +1038,13 @@ export default function App() {
         } catch (error) {
             console.error("Delete trip error:", error);
             setNotification({ message: 'Не удалось удалить поездку.', type: 'error' });
-        } finally {
-            closeNotification();
         }
     };
 
     const closeNotification = () => {
-        setNotification({ message: '', type: '', onConfirm: null });
+        setNotification({ message: '', type: '' });
     };
-
+    
     if (!areFirebaseKeysAvailable) {
         return (
             <div className="min-h-screen bg-red-900 text-white flex flex-col justify-center items-center p-4 text-center">
@@ -1071,7 +1058,7 @@ export default function App() {
         );
     }
 
-    if (isLoading && !isAuthComplete) {
+    if (!isAuthComplete || !userSettings) {
         return (
             <div className="min-h-screen bg-slate-100 dark:bg-slate-900 flex flex-col justify-center items-center text-slate-800 dark:text-white">
                 <Loader2 className="h-12 w-12 animate-spin text-indigo-500 dark:text-indigo-400 mb-4" />
@@ -1129,7 +1116,7 @@ export default function App() {
                         message={notification.message} 
                         type={notification.type} 
                         onConfirm={notification.onConfirm}
-                        onCancel={closeNotification} 
+                        onCancel={notification.onCancel || closeNotification} 
                     />
                 )}
             </AnimatePresence>
