@@ -4,7 +4,7 @@ import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken }
 import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, updateDoc, deleteDoc, serverTimestamp, query, orderBy as firestoreOrderBy } from 'firebase/firestore';
 import { Truck, Settings, Plus, DollarSign, CalendarDays, Clock, MapPin, TrendingUp, FileText, ChevronDown, Trash2, Edit3, Save, X, Sun, Moon, UploadCloud, FileScan, Play, ChevronsLeft, ChevronsRight, Loader2, User, AlertTriangle } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { format, startOfWeek, endOfWeek, getWeek, parseISO } from 'date-fns';
+import { format, startOfWeek, endOfWeek, getWeek, parseISO, isValid } from 'date-fns';
 import { ru } from 'date-fns/locale';
 
 // --- НАСТРОЙКИ FIREBASE ---
@@ -71,7 +71,7 @@ const parseNumericInput = (value) => {
 
 const formatCurrency = (value) => {
     const num = parseNumericInput(value);
-    // Напоминание: мы договорились всегда использовать доллары
+    // Напоминание: мы договорились всегда использовать доллары.
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
 };
 
@@ -183,13 +183,11 @@ const calculateTripProfit = (trip, settings) => {
     const tripMiles = parseNumericInput(trip.tripMiles);
     const daysInTrip = parseNumericInput(trip.daysInTrip) || 1;
 
-    // Расходы компании
     const rentCharge = (parseNumericInput(settings.rentPerWeek) / 7) * daysInTrip;
     const percentageCharge = tripGross * (parseNumericInput(settings.percentageFromGross) / 100);
     const companyMileCharge = tripMiles * parseNumericInput(settings.ratePerMileCompanyCharge);
     const calculatedCompanyDeductions = rentCharge + percentageCharge + companyMileCharge;
 
-    // Дополнительные расходы
     const standardExpenses = settings.expenses
         ?.filter(e => e.enabled)
         .reduce((acc, curr) => acc + parseNumericInput(curr.amount), 0) || 0;
@@ -200,7 +198,6 @@ const calculateTripProfit = (trip, settings) => {
 
     const calculatedAdditionalExpenses = standardExpenses + customExpenses;
 
-    // Итоги
     const calculatedTotalExpenses = calculatedCompanyDeductions + calculatedAdditionalExpenses;
     const calculatedNetProfit = tripGross - calculatedTotalExpenses;
     const calculatedRatePerMile = tripMiles > 0 ? tripGross / tripMiles : 0;
@@ -677,43 +674,52 @@ const OverallSummary = ({ trips }) => {
     );
 }
 
-const TripListItem = ({ trip, onEdit, onDelete }) => (
-    <motion.div
-        layout
-        initial={{ opacity: 0, y: 20 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -20 }}
-        className="bg-slate-900/50 p-4 rounded-xl border border-slate-700 space-y-3"
-    >
-        <div className="flex justify-between items-start">
-            <div>
-                <h3 className="font-bold text-lg text-white">{trip.fromLocation} → {trip.toLocation}</h3>
-                <p className="text-sm text-slate-400">{format(parseISO(trip.date), "d MMMM playerId", { locale: ru })} - {trip.daysInTrip} дн.</p>
+const TripListItem = ({ trip, onEdit, onDelete }) => {
+    // ИСПРАВЛЕНИЕ: Добавляем проверку, что дата действительна, перед форматированием
+    const tripDate = parseISO(trip.date);
+    const formattedDate = isValid(tripDate) 
+        ? format(tripDate, "d MMMM yyyy 'г.'", { locale: ru })
+        : "Неверная дата";
+
+    return (
+        <motion.div
+            layout
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="bg-slate-900/50 p-4 rounded-xl border border-slate-700 space-y-3"
+        >
+            <div className="flex justify-between items-start">
+                <div>
+                    <h3 className="font-bold text-lg text-white">{trip.fromLocation} → {trip.toLocation}</h3>
+                    {/* ИСПРАВЛЕНИЕ: Используем проверенную и отформатированную дату */}
+                    <p className="text-sm text-slate-400">{formattedDate} - {trip.daysInTrip} дн.</p>
+                </div>
+                 <div className="flex items-center space-x-2">
+                    <button onClick={() => onEdit(trip)} className="p-2 rounded-full text-blue-400 hover:bg-blue-500/20 transition-colors"><Edit3 size={18}/></button>
+                    <button onClick={() => onDelete(trip.id)} className="p-2 rounded-full text-red-400 hover:bg-red-500/20 transition-colors"><Trash2 size={18}/></button>
+                </div>
             </div>
-             <div className="flex items-center space-x-2">
-                <button onClick={() => onEdit(trip)} className="p-2 rounded-full text-blue-400 hover:bg-blue-500/20 transition-colors"><Edit3 size={18}/></button>
-                <button onClick={() => onDelete(trip.id)} className="p-2 rounded-full text-red-400 hover:bg-red-500/20 transition-colors"><Trash2 size={18}/></button>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-center text-sm">
+                <div className="bg-slate-800/50 p-2 rounded-md">
+                    <p className="text-xs text-slate-500">Gross</p>
+                    <p className="font-semibold text-white">{formatCurrency(trip.tripGross)}</p>
+                </div>
+                 <div className="bg-slate-800/50 p-2 rounded-md">
+                    <p className="text-xs text-slate-500">Мили</p>
+                    <p className="font-semibold text-white">{trip.tripMiles}</p>
+                </div>
+                 <div className={`p-2 rounded-md ${trip.calculatedNetProfit >= 0 ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
+                    <p className="text-xs text-slate-500">Прибыль</p>
+                    <p className={`font-semibold ${trip.calculatedNetProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatCurrency(trip.calculatedNetProfit)}</p>
+                </div>
             </div>
-        </div>
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-center text-sm">
-            <div className="bg-slate-800/50 p-2 rounded-md">
-                <p className="text-xs text-slate-500">Gross</p>
-                <p className="font-semibold text-white">{formatCurrency(trip.tripGross)}</p>
-            </div>
-             <div className="bg-slate-800/50 p-2 rounded-md">
-                <p className="text-xs text-slate-500">Мили</p>
-                <p className="font-semibold text-white">{trip.tripMiles}</p>
-            </div>
-             <div className={`p-2 rounded-md ${trip.calculatedNetProfit >= 0 ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
-                <p className="text-xs text-slate-500">Прибыль</p>
-                <p className={`font-semibold ${trip.calculatedNetProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>{formatCurrency(trip.calculatedNetProfit)}</p>
-            </div>
-        </div>
-        {trip.notes && (
-            <p className="text-sm text-slate-400 italic bg-slate-800/50 p-2 rounded-md">Заметка: {trip.notes}</p>
-        )}
-    </motion.div>
-)
+            {trip.notes && (
+                <p className="text-sm text-slate-400 italic bg-slate-800/50 p-2 rounded-md">Заметка: {trip.notes}</p>
+            )}
+        </motion.div>
+    )
+}
 
 const TripsByPeriod = ({ trips, onEdit, onDelete }) => {
     const [currentDate, setCurrentDate] = useState(new Date());
@@ -722,10 +728,10 @@ const TripsByPeriod = ({ trips, onEdit, onDelete }) => {
     const end = endOfWeek(currentDate, { weekStartsOn: 1 });
 
     const filteredTrips = useMemo(() => {
-        return trips
+        return (trips || []) // Добавлена проверка на случай, если trips еще не загрузились
             .filter(trip => {
                 const tripDate = parseISO(trip.date);
-                return tripDate >= start && tripDate <= end;
+                return isValid(tripDate) && tripDate >= start && tripDate <= end;
             })
             .sort((a, b) => parseISO(b.date) - parseISO(a.date));
     }, [trips, start, end]);
@@ -740,7 +746,7 @@ const TripsByPeriod = ({ trips, onEdit, onDelete }) => {
                  <button onClick={prevWeek} className="p-3 rounded-lg hover:bg-slate-700 transition-colors"><ChevronsLeft /></button>
                  <div className="text-center">
                     <p className="font-semibold text-white">Неделя {getWeek(currentDate, { weekStartsOn: 1 })}</p>
-                    <p className="text-xs text-slate-400">{format(start, 'd MMM', { locale: ru })} - {format(end, 'd MMM playerId', { locale: ru })}</p>
+                    <p className="text-xs text-slate-400">{format(start, 'd MMM', { locale: ru })} - {format(end, 'd MMM yyyy', { locale: ru })}</p>
                  </div>
                  <button onClick={nextWeek} className="p-3 rounded-lg hover:bg-slate-700 transition-colors"><ChevronsRight /></button>
             </div>
@@ -859,70 +865,27 @@ export default function App() {
     const [userSettings, setUserSettings] = useState(DEFAULT_USER_SETTINGS);
     const [trips, setTrips] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
+    const [isAuthComplete, setIsAuthComplete] = useState(false);
     const [newTripData, setNewTripData] = useState(INITIAL_TRIP_FORM_STATE);
     const [editingTrip, setEditingTrip] = useState(null);
     const [notification, setNotification] = useState({ message: '', type: '', onConfirm: null });
     const [deletingTripId, setDeletingTripId] = useState(null);
 
-    // --- Управление темой ---
     useEffect(() => {
-        if (theme === 'dark') {
-            document.documentElement.classList.add('dark');
-        } else {
-            document.documentElement.classList.remove('dark');
-        }
+        if (theme === 'dark') document.documentElement.classList.add('dark');
+        else document.documentElement.classList.remove('dark');
     }, [theme]);
 
-    // --- Аутентификация и загрузка данных ---
     useEffect(() => {
         if (!areFirebaseKeysAvailable) {
             setIsLoading(false);
             return;
         }
 
-        const authAndLoad = async (authUser) => {
-            const currentUserId = authUser.uid;
-            setUserId(currentUserId);
-            
-            const firestorePathPrefix = `artifacts/${firebaseConfig.projectId}/users/${currentUserId}`;
-
-            // Загрузка настроек
-            const settingsRef = doc(db, `${firestorePathPrefix}/settings`, 'appSettings');
-            const settingsUnsub = onSnapshot(settingsRef, (docSnap) => {
-                if (docSnap.exists()) {
-                    setUserSettings(prevSettings => ({ ...prevSettings, ...docSnap.data() }));
-                } else {
-                    setDoc(settingsRef, DEFAULT_USER_SETTINGS);
-                    setUserSettings(DEFAULT_USER_SETTINGS);
-                }
-                 setIsLoading(false);
-            }, (error) => {
-                console.error("Ошибка загрузки настроек:", error);
-                setNotification({ message: 'Ошибка загрузки настроек.', type: 'error' });
-                setIsLoading(false);
-            });
-
-            // Загрузка поездок
-            const tripsRef = collection(db, `${firestorePathPrefix}/trips`);
-            const q = query(tripsRef, firestoreOrderBy('date', 'desc'));
-            const tripsUnsub = onSnapshot(q, (querySnapshot) => {
-                const tripsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                setTrips(tripsData);
-            }, (error) => {
-                console.error("Ошибка загрузки поездок:", error);
-                setNotification({ message: 'Ошибка загрузки поездок.', type: 'error' });
-            });
-            
-            return () => {
-                settingsUnsub();
-                tripsUnsub();
-            };
-        };
-
         const unsub = onAuthStateChanged(auth, async (authUser) => {
             if (authUser) {
                 setUser(authUser);
-                await authAndLoad(authUser);
+                setUserId(authUser.uid);
             } else {
                 try {
                     const initialToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
@@ -932,22 +895,64 @@ export default function App() {
                        await signInAnonymously(auth);
                     }
                 } catch (error) {
-                    console.error("Ошибка анонимной аутентификации:", error);
+                    console.error("Authentication error:", error);
                     setNotification({ message: 'Не удалось войти. Данные не будут сохраняться.', type: 'error' });
-                    setIsLoading(false);
                 }
             }
+            // ИСПРАВЛЕНИЕ ЗАГРУЗКИ: Говорим, что аутентификация завершена, чтобы убрать долгую загрузку
+            setIsAuthComplete(true);
         });
 
         return () => unsub();
     }, []);
+
+    useEffect(() => {
+        if (!isAuthComplete || !userId) {
+            if (isAuthComplete) setIsLoading(false); // Убираем загрузчик, если auth прошел, но нет userId
+            return;
+        };
+
+        const firestorePathPrefix = `artifacts/${firebaseConfig.projectId}/users/${userId}`;
+        
+        // Загрузка настроек
+        const settingsRef = doc(db, `${firestorePathPrefix}/settings`, 'appSettings');
+        const settingsUnsub = onSnapshot(settingsRef, (docSnap) => {
+            if (docSnap.exists()) {
+                setUserSettings(docSnap.data());
+            } else {
+                setDoc(settingsRef, DEFAULT_USER_SETTINGS);
+                setUserSettings(DEFAULT_USER_SETTINGS);
+            }
+            setIsLoading(false); // Убираем загрузчик после загрузки настроек
+        }, (error) => {
+            console.error("Settings loading error:", error);
+            setNotification({ message: 'Ошибка загрузки настроек.', type: 'error' });
+            setIsLoading(false);
+        });
+
+        // Загрузка поездок
+        const tripsRef = collection(db, `${firestorePathPrefix}/trips`);
+        const q = query(tripsRef, firestoreOrderBy('date', 'desc'));
+        const tripsUnsub = onSnapshot(q, (querySnapshot) => {
+            const tripsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setTrips(tripsData);
+        }, (error) => {
+            console.error("Trips loading error:", error);
+            setNotification({ message: 'Ошибка загрузки поездок.', type: 'error' });
+        });
+        
+        return () => {
+            settingsUnsub();
+            tripsUnsub();
+        };
+    }, [isAuthComplete, userId]);
 
     const debouncedSaveSettings = useCallback(
         debounce((newSettings) => {
             if (userId) {
                 const settingsRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/settings`, 'appSettings');
                 setDoc(settingsRef, newSettings, { merge: true }).catch(err => {
-                     console.error("Ошибка сохранения настроек:", err);
+                     console.error("Settings save error:", err);
                      setNotification({ message: 'Не удалось сохранить настройки.', type: 'error' });
                 });
             }
@@ -957,7 +962,7 @@ export default function App() {
 
     const handleSettingsChange = (key, value) => {
         setUserSettings(prevSettings => {
-            const newSettings = { ...prevSettings };
+            const newSettings = JSON.parse(JSON.stringify(prevSettings));
             if (key === 'updateExpense') {
                 newSettings.expenses[value.index].amount = value.value;
             } else if (key === 'toggleExpense') {
@@ -972,7 +977,9 @@ export default function App() {
 
     const handleCustomExpenseChange = (action, payload) => {
         setUserSettings(prevSettings => {
-            const newSettings = { ...prevSettings, customExpenses: [...(prevSettings.customExpenses || [])] };
+            const newSettings = JSON.parse(JSON.stringify(prevSettings));
+            if(!newSettings.customExpenses) newSettings.customExpenses = [];
+
             switch(action) {
                 case 'add':
                     newSettings.customExpenses.push(payload);
@@ -995,7 +1002,7 @@ export default function App() {
     
     const handleFuelExpenseUpdate = (amount) => {
         setUserSettings(prevSettings => {
-            const newSettings = JSON.parse(JSON.stringify(prevSettings)); // Deep copy
+            const newSettings = JSON.parse(JSON.stringify(prevSettings));
             const fuelIndex = newSettings.expenses.findIndex(e => e.name === "Топливо");
             if(fuelIndex !== -1){
                 const currentAmount = parseNumericInput(newSettings.expenses[fuelIndex].amount);
@@ -1035,7 +1042,7 @@ export default function App() {
             setNotification({ message: 'Поездка успешно добавлена!', type: 'success' });
             setNewTripData(INITIAL_TRIP_FORM_STATE);
         } catch (error) {
-            console.error("Ошибка добавления поездки:", error);
+            console.error("Add trip error:", error);
             setNotification({ message: 'Не удалось добавить поездку.', type: 'error' });
         }
     };
@@ -1058,7 +1065,7 @@ export default function App() {
             setNotification({ message: 'Поездка успешно обновлена!', type: 'success' });
             setEditingTrip(null);
         } catch (error) {
-            console.error("Ошибка обновления поездки:", error);
+            console.error("Update trip error:", error);
             setNotification({ message: 'Не удалось обновить поездку.', type: 'error' });
         }
     }
@@ -1068,7 +1075,7 @@ export default function App() {
         setNotification({
             message: 'Вы уверены, что хотите удалить эту поездку? Это действие необратимо.',
             type: 'confirm',
-            onConfirm: () => confirmDeleteTrip(tripId),
+            onConfirm: () => confirmDeleteTrip(),
             onCancel: closeNotification
         });
     }
@@ -1079,10 +1086,10 @@ export default function App() {
             const tripRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`, deletingTripId);
             await deleteDoc(tripRef);
             setNotification({ message: 'Поездка удалена.', type: 'success' });
-            setDeletingTripId(null);
         } catch (error) {
-            console.error("Ошибка удаления поездки:", error);
+            console.error("Delete trip error:", error);
             setNotification({ message: 'Не удалось удалить поездку.', type: 'error' });
+        } finally {
             setDeletingTripId(null);
         }
     };
@@ -1108,7 +1115,7 @@ export default function App() {
         return (
             <div className="min-h-screen bg-slate-900 flex flex-col justify-center items-center text-white">
                 <Loader2 className="h-12 w-12 animate-spin text-indigo-400 mb-4" />
-                <p className="text-lg">Загрузка данных...</p>
+                <p className="text-lg">Загрузка приложения...</p>
             </div>
         );
     }
@@ -1161,7 +1168,7 @@ export default function App() {
                     <NotificationModal 
                         message={notification.message} 
                         type={notification.type} 
-                        onConfirm={notification.onConfirm} 
+                        onConfirm={notification.onConfirm || closeNotification}
                         onCancel={closeNotification} 
                     />
                 )}
