@@ -137,7 +137,7 @@ const StyledButton = ({ children, onClick, icon: Icon, className = '', type = 'b
         type={type}
         onClick={onClick}
         disabled={disabled}
-        className={`relative inline-flex items-center justify-center w-full px-6 py-3 overflow-hidden font-bold text-white rounded-xl group transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+        className={`relative inline-flex items-center justify-center w-full px-6 py-3 overflow-hidden font-bold text-white rounded-xl group transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed transform-gpu active:scale-95 ${className}`}
     >
         <span className="absolute inset-0 w-full h-full bg-gradient-to-br from-indigo-600 to-blue-500"></span>
         <span className="absolute bottom-0 right-0 block w-64 h-64 mb-32 mr-4 transition-all duration-500 origin-bottom-left-do transform translate-x-24 bg-blue-700 rounded-full opacity-30 group-hover:translate-x-0 ease"></span>
@@ -152,7 +152,7 @@ const DestructiveButton = ({ children, onClick, icon: Icon, className = '', disa
      <button
         onClick={onClick}
         disabled={disabled}
-        className={`relative inline-flex items-center justify-center w-full px-6 py-3 overflow-hidden font-bold text-white rounded-xl group transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed ${className}`}
+        className={`relative inline-flex items-center justify-center w-full px-6 py-3 overflow-hidden font-bold text-white rounded-xl group transition-all duration-300 disabled:opacity-50 disabled:cursor-not-allowed transform-gpu active:scale-95 ${className}`}
     >
         <span className="absolute inset-0 w-full h-full bg-gradient-to-br from-red-600 to-rose-500"></span>
         <span className="absolute bottom-0 right-0 block w-64 h-64 mb-32 mr-4 transition-all duration-500 origin-bottom-left-do transform translate-x-24 bg-rose-700 rounded-full opacity-30 group-hover:translate-x-0 ease"></span>
@@ -831,8 +831,7 @@ export default function App() {
     const [newTripData, setNewTripData] = useState(INITIAL_TRIP_FORM_STATE);
     const [editingTrip, setEditingTrip] = useState(null);
     const [notification, setNotification] = useState({ message: '', type: '', onConfirm: null });
-    const [deletingTripId, setDeletingTripId] = useState(null);
-
+    
     useEffect(() => {
         const root = window.document.documentElement;
         if (theme === 'dark') {
@@ -1033,17 +1032,7 @@ export default function App() {
         }
     }
     
-    const handleDeleteTrip = (tripId) => {
-        setDeletingTripId(tripId);
-        setNotification({
-            message: 'Вы уверены, что хотите удалить эту поездку? Это действие необратимо.',
-            type: 'confirm',
-            onConfirm: () => confirmDeleteTrip(tripId),
-            onCancel: closeNotification
-        });
-    }
-
-    const confirmDeleteTrip = async (tripId) => {
+    const confirmDeleteAction = async (tripId) => {
         if (!userId || !tripId) return;
         try {
             const tripRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`, tripId);
@@ -1053,11 +1042,18 @@ export default function App() {
             console.error("Delete trip error:", error);
             setNotification({ message: 'Не удалось удалить поездку.', type: 'error' });
         } finally {
-            setDeletingTripId(null);
-            // Закрываем модальное окно подтверждения
             closeNotification(); 
         }
     };
+    
+    const handleDeleteTrip = (tripId) => {
+        setNotification({
+            message: 'Вы уверены, что хотите удалить эту поездку? Это действие необратимо.',
+            type: 'confirm',
+            onConfirm: () => confirmDeleteAction(tripId),
+            onCancel: closeNotification
+        });
+    }
 
     const closeNotification = () => {
         setNotification({ message: '', type: '', onConfirm: null });
@@ -1133,13 +1129,7 @@ export default function App() {
                     <NotificationModal 
                         message={notification.message} 
                         type={notification.type} 
-                        onConfirm={() => {
-                           if (notification.type === 'confirm' && deletingTripId) {
-                               confirmDeleteTrip(deletingTripId);
-                           } else {
-                               closeNotification();
-                           }
-                        }}
+                        onConfirm={notification.onConfirm}
                         onCancel={closeNotification} 
                     />
                 )}
