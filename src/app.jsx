@@ -1,30 +1,35 @@
-import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
 import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, updateDoc, deleteDoc, serverTimestamp, query, orderBy as firestoreOrderBy } from 'firebase/firestore';
 import { Truck, Settings, Plus, DollarSign, CalendarDays, Clock, MapPin, TrendingUp, FileText, ChevronDown, Trash2, Edit3, Save, X, Sun, Moon, UploadCloud, FileScan, Play, ChevronsLeft, ChevronsRight, Loader2, User, AlertTriangle } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { format, startOfWeek, endOfWeek, startOfMonth, endOfMonth, getWeek, getYear, getMonth, parseISO } from 'date-fns';
+import { format, startOfWeek, endOfWeek, getWeek, parseISO } from 'date-fns';
 import { ru } from 'date-fns/locale';
 
 // --- НАСТРОЙКИ FIREBASE ---
-// БЕЗОПАСНЫЙ ВАРИАНТ ДЛЯ VERCEL
-// Этот код будет брать ключи из настроек Vercel, которые ты добавишь позже.
 const firebaseConfig = {
-  apiKey: import.meta.env.VITE_API_KEY,
-  authDomain: import.meta.env.VITE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_APP_ID
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
 };
 
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+// --- ПРОВЕРКА КЛЮЧЕЙ FIREBASE ---
+const areFirebaseKeysAvailable = 
+    firebaseConfig.apiKey &&
+    firebaseConfig.projectId &&
+    firebaseConfig.appId;
 
-// --- ИНИЦИАЛИЗАЦИЯ FIREBASE ---
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+// --- ИНИЦИАЛИЗАЦИЯ FIREBASE (ТОЛЬКО ЕСЛИ КЛЮЧИ ДОСТУПНЫ) ---
+let app, auth, db;
+if (areFirebaseKeysAvailable) {
+    app = initializeApp(firebaseConfig);
+    auth = getAuth(app);
+    db = getFirestore(app);
+}
 
 // --- КОНСТАНТЫ ---
 const DIESEL_DISCOUNT_PER_GALLON = 0.60;
@@ -47,6 +52,16 @@ const DEFAULT_USER_SETTINGS = {
     customExpenses: [],
 };
 
+const INITIAL_TRIP_FORM_STATE = {
+    date: format(new Date(), 'yyyy-MM-dd'),
+    daysInTrip: '',
+    fromLocation: '',
+    toLocation: '',
+    tripGross: '',
+    tripMiles: '',
+    notes: ''
+};
+
 // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 const parseNumericInput = (value) => {
     if (value === null || value === undefined || value === '') return 0;
@@ -56,6 +71,7 @@ const parseNumericInput = (value) => {
 
 const formatCurrency = (value) => {
     const num = parseNumericInput(value);
+    // Напоминание: мы договорились всегда использовать доллары
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
 };
 
@@ -76,7 +92,7 @@ const Card = ({ children, className = '', ...props }) => (
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className={`bg-slate-800/60 dark:bg-slate-800/60 backdrop-blur-md border border-slate-700 dark:border-slate-700 rounded-2xl p-4 sm:p-6 shadow-2xl shadow-black/20 ${className}`}
+        className={`bg-slate-800/60 backdrop-blur-md border border-slate-700 rounded-2xl p-4 sm:p-6 shadow-2xl shadow-black/20 ${className}`}
         {...props}
     >
         {children}
@@ -85,9 +101,9 @@ const Card = ({ children, className = '', ...props }) => (
 
 const InputField = ({ icon: Icon, label, id, type = "text", value, onChange, placeholder, required = false, className = '' }) => (
     <div className={`relative ${className}`}>
-        <label htmlFor={id} className="block text-sm font-medium text-slate-300 dark:text-slate-300 mb-1.5">{label}</label>
+        <label htmlFor={id} className="block text-sm font-medium text-slate-300 mb-1.5">{label}</label>
         <div className="relative">
-            {Icon && <Icon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400 dark:text-slate-400" />}
+            {Icon && <Icon className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-slate-400" />}
             <input
                 type={type}
                 id={id}
@@ -95,7 +111,7 @@ const InputField = ({ icon: Icon, label, id, type = "text", value, onChange, pla
                 onChange={onChange}
                 placeholder={placeholder}
                 required={required}
-                className={`w-full ${Icon ? 'pl-10' : 'pl-4'} pr-4 py-2.5 bg-slate-900/70 dark:bg-slate-900/70 border border-slate-700 dark:border-slate-700 rounded-xl text-white placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all duration-300 shadow-inner-soft`}
+                className={`w-full ${Icon ? 'pl-10' : 'pl-4'} pr-4 py-2.5 bg-slate-900/70 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all duration-300 shadow-inner-soft`}
             />
         </div>
     </div>
@@ -103,16 +119,16 @@ const InputField = ({ icon: Icon, label, id, type = "text", value, onChange, pla
 
 const TextareaField = ({ icon: Icon, label, id, value, onChange, placeholder, className = '' }) => (
     <div className={`relative ${className}`}>
-        <label htmlFor={id} className="block text-sm font-medium text-slate-300 dark:text-slate-300 mb-1.5">{label}</label>
+        <label htmlFor={id} className="block text-sm font-medium text-slate-300 mb-1.5">{label}</label>
         <div className="relative">
-            {Icon && <Icon className="absolute left-3 top-4 h-5 w-5 text-slate-400 dark:text-slate-400" />}
+            {Icon && <Icon className="absolute left-3 top-4 h-5 w-5 text-slate-400" />}
              <textarea
                 id={id}
                 value={value}
                 onChange={onChange}
                 placeholder={placeholder}
                 rows="3"
-                className={`w-full ${Icon ? 'pl-10' : 'pl-4'} pr-4 py-2.5 bg-slate-900/70 dark:bg-slate-900/70 border border-slate-700 dark:border-slate-700 rounded-xl text-white placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all duration-300 shadow-inner-soft`}
+                className={`w-full ${Icon ? 'pl-10' : 'pl-4'} pr-4 py-2.5 bg-slate-900/70 border border-slate-700 rounded-xl text-white placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all duration-300 shadow-inner-soft`}
             />
         </div>
     </div>
@@ -204,7 +220,7 @@ const calculateTripProfit = (trip, settings) => {
 // --- КОМПОНЕНТЫ ПРИЛОЖЕНИЯ ---
 
 const AppHeader = ({ theme, setTheme, userSettings }) => (
-    <header className="sticky top-0 z-40 w-full bg-slate-900/70 dark:bg-slate-900/70 backdrop-blur-lg border-b border-slate-800 dark:border-slate-800">
+    <header className="sticky top-0 z-40 w-full bg-slate-900/70 backdrop-blur-lg border-b border-slate-800">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between h-16">
                 <div className="flex items-center space-x-3">
@@ -220,7 +236,7 @@ const AppHeader = ({ theme, setTheme, userSettings }) => (
                 </div>
                 <div className="flex items-center space-x-4">
                      {userSettings?.nickname && (
-                        <div className="hidden sm:block text-sm font-semibold text-blue-300 dark:text-blue-300">
+                        <div className="hidden sm:block text-sm font-semibold text-blue-300">
                              <span className="flex items-center"><User size={16} className="mr-1.5"/>{userSettings.nickname}</span>
                         </div>
                     )}
@@ -243,7 +259,7 @@ const NavigationTabs = ({ activeTab, setActiveTab }) => {
     ];
 
     return (
-        <div className="p-2 bg-slate-900 dark:bg-slate-900 rounded-xl m-4 flex items-center space-x-2">
+        <div className="p-2 bg-slate-900 rounded-xl m-4 flex items-center space-x-2">
             {tabs.map(tab => (
                 <button
                     key={tab.id}
@@ -268,17 +284,8 @@ const NavigationTabs = ({ activeTab, setActiveTab }) => {
     );
 };
 
-const TripForm = ({ onAddTrip }) => {
-    const [tripData, setTripData] = useState({
-        date: format(new Date(), 'yyyy-MM-dd'),
-        daysInTrip: '',
-        fromLocation: '',
-        toLocation: '',
-        tripGross: '',
-        tripMiles: '',
-        notes: ''
-    });
-
+const TripForm = ({ tripData, setTripData, onAddTrip }) => {
+    
     const handleChange = (e) => {
         const { id, value } = e.target;
         setTripData(prev => ({ ...prev, [id]: value }));
@@ -287,15 +294,6 @@ const TripForm = ({ onAddTrip }) => {
     const handleSubmit = (e) => {
         e.preventDefault();
         onAddTrip(tripData);
-        setTripData({
-            date: format(new Date(), 'yyyy-MM-dd'),
-            daysInTrip: '',
-            fromLocation: '',
-            toLocation: '',
-            tripGross: '',
-            tripMiles: '',
-            notes: ''
-        });
     };
     
     return (
@@ -416,7 +414,7 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate }) => {
     const [isLoading, setIsLoading] = useState(false);
     const [ocrResult, setOcrResult] = useState(null);
     const [error, setError] = useState('');
-    const fileInputRef = useRef(null);
+    const fileInputRef = React.useRef(null);
 
     const handleFileChange = (e) => {
         const file = e.target.files[0];
@@ -442,37 +440,19 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate }) => {
         setOcrResult(null);
 
         try {
-            const prompt = `КРАЙНЕ ВНИМАТЕЛЬНО проанализируй это изображение чека на топливо. Твоя задача - извлечь информацию о КАЖДОЙ топливной позиции (любой дизель, включая "REEFER FUEL", и DEF/AdBlue). Верни результат СТРОГО в формате JSON массива объектов. Не добавляй никакого текста до или после этого JSON массива. Каждый объект в массиве должен представлять ОДНУ топливную позицию с чека и содержать СЛЕДУЮЩИЕ ТРИ ПОЛЯ: 1. "productName": ТОЧНОЕ название продукта, как оно указано на чеке. 2. "gallons": Количество галлонов для этой ОДНОЙ позиции (число). Если галлоны не указаны, верни 0. 3. "cost": Стоимость для этой ОДНОЙ позиции (число). Если стоимость не указана, верни 0. Если на чеке нет НИ ОДНОЙ топливной позиции, верни пустой массив []. Убедись, что все значения "gallons" и "cost" являются числами. Ответ должен быть ТОЛЬКО JSON массивом.`;
+            const prompt = `Анализируй чек на топливо. Извлеки КАЖДУЮ топливную позицию (дизель, reefer, DEF). Верни СТРОГО JSON массив объектов. Каждый объект должен содержать ТРИ ПОЛЯ: "productName": ТОЧНОЕ название, "gallons": количество галлонов (число, 0 если нет), "cost": стоимость (число, 0 если нет). Если топливных позиций нет, верни пустой массив []. Ответ - ТОЛЬКО JSON.`;
             
             const payload = {
-                contents: [
-                    {
-                        role: "user",
-                        parts: [
-                            { text: prompt },
-                            { inlineData: { mimeType: "image/png", data: imageBase64 } }
-                        ]
-                    }
-                ],
-                generationConfig: {
-                    responseMimeType: "application/json",
-                    responseSchema: {
-                        type: "ARRAY",
-                        items: {
-                            type: "OBJECT",
-                            properties: {
-                                "productName": { "type": "STRING" },
-                                "gallons": { "type": "NUMBER" },
-                                "cost": { "type": "NUMBER" }
-                            },
-                             required: ["productName", "gallons", "cost"]
-                        }
-                    }
-                }
+                contents: [ { parts: [ { text: prompt }, { inline_data: { mime_type: "image/png", data: imageBase64 } } ] } ],
+                generation_config: { response_mime_type: "application/json" }
             };
             
-            const apiKey = ""; // API ключ предоставляется средой выполнения
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${apiKey}`;
+            const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
+            if (!apiKey) {
+                throw new Error("API ключ для Gemini не найден. Добавьте VITE_GEMINI_API_KEY в переменные окружения.");
+            }
+            
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
             const response = await fetch(apiUrl, {
                 method: 'POST',
@@ -480,13 +460,12 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate }) => {
                 body: JSON.stringify(payload)
             });
             
-            if (!response.ok) {
-                 const errorBody = await response.json();
-                 console.error("API Error Body:", errorBody);
-                 throw new Error(`Ошибка API: ${errorBody.error?.message || response.statusText}`);
-            }
-
             const result = await response.json();
+
+            if (!response.ok) {
+                 console.error("API Error Body:", result);
+                 throw new Error(`Ошибка API: ${result.error?.message || response.statusText}`);
+            }
 
             if (result.candidates && result.candidates[0].content && result.candidates[0].content.parts.length > 0) {
                 const parsedResult = JSON.parse(result.candidates[0].content.parts[0].text);
@@ -716,7 +695,7 @@ const TripListItem = ({ trip, onEdit, onDelete }) => (
         <div className="flex justify-between items-start">
             <div>
                 <h3 className="font-bold text-lg text-white">{trip.fromLocation} → {trip.toLocation}</h3>
-                <p className="text-sm text-slate-400">{format(parseISO(trip.date), "d MMMM<y_bin_46> 'г.'", { locale: ru })} - {trip.daysInTrip} дн.</p>
+                <p className="text-sm text-slate-400">{format(parseISO(trip.date), "d MMMMfirstSending 'г.'", { locale: ru })} - {trip.daysInTrip} дн.</p>
             </div>
              <div className="flex items-center space-x-2">
                 <button onClick={() => onEdit(trip)} className="p-2 rounded-full text-blue-400 hover:bg-blue-500/20 transition-colors"><Edit3 size={18}/></button>
@@ -758,8 +737,8 @@ const TripsByPeriod = ({ trips, onEdit, onDelete }) => {
             .sort((a, b) => parseISO(b.date) - parseISO(a.date));
     }, [trips, start, end]);
 
-    const prevWeek = () => setCurrentDate(new Date(currentDate.setDate(currentDate.getDate() - 7)));
-    const nextWeek = () => setCurrentDate(new Date(currentDate.setDate(currentDate.getDate() + 7)));
+    const prevWeek = () => setCurrentDate(new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000));
+    const nextWeek = () => setCurrentDate(new Date(currentDate.getTime() + 7 * 24 * 60 * 60 * 1000));
     
     return (
         <Card>
@@ -768,7 +747,7 @@ const TripsByPeriod = ({ trips, onEdit, onDelete }) => {
                  <button onClick={prevWeek} className="p-3 rounded-lg hover:bg-slate-700 transition-colors"><ChevronsLeft /></button>
                  <div className="text-center">
                     <p className="font-semibold text-white">Неделя {getWeek(currentDate, { weekStartsOn: 1 })}</p>
-                    <p className="text-xs text-slate-400">{format(start, 'd MMM', { locale: ru })} - {format(end, 'd MMM<y_bin_46>', { locale: ru })}</p>
+                    <p className="text-xs text-slate-400">{format(start, 'd MMM', { locale: ru })} - {format(end, 'd MMM yyyy', { locale: ru })}</p>
                  </div>
                  <button onClick={nextWeek} className="p-3 rounded-lg hover:bg-slate-700 transition-colors"><ChevronsRight /></button>
             </div>
@@ -887,7 +866,7 @@ export default function App() {
     const [userSettings, setUserSettings] = useState(DEFAULT_USER_SETTINGS);
     const [trips, setTrips] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [currentTripForm, setCurrentTripForm] = useState(null);
+    const [newTripData, setNewTripData] = useState(INITIAL_TRIP_FORM_STATE);
     const [editingTrip, setEditingTrip] = useState(null);
     const [notification, setNotification] = useState({ message: '', type: '', onConfirm: null });
     const [deletingTripId, setDeletingTripId] = useState(null);
@@ -903,17 +882,23 @@ export default function App() {
 
     // --- Аутентификация и загрузка данных ---
     useEffect(() => {
+        if (!areFirebaseKeysAvailable) {
+            setIsLoading(false);
+            return;
+        }
+
         const authAndLoad = async (authUser) => {
             const currentUserId = authUser.uid;
             setUserId(currentUserId);
+            
+            const firestorePathPrefix = `artifacts/${firebaseConfig.projectId}/users/${currentUserId}`;
 
             // Загрузка настроек
-            const settingsRef = doc(db, `artifacts/${appId}/users/${currentUserId}/settings`, 'appSettings');
+            const settingsRef = doc(db, `${firestorePathPrefix}/settings`, 'appSettings');
             const settingsUnsub = onSnapshot(settingsRef, (docSnap) => {
                 if (docSnap.exists()) {
-                    setUserSettings(docSnap.data());
+                    setUserSettings(prevSettings => ({ ...prevSettings, ...docSnap.data() }));
                 } else {
-                    // Создаем настройки по умолчанию для нового пользователя
                     setDoc(settingsRef, DEFAULT_USER_SETTINGS);
                     setUserSettings(DEFAULT_USER_SETTINGS);
                 }
@@ -925,7 +910,7 @@ export default function App() {
             });
 
             // Загрузка поездок
-            const tripsRef = collection(db, `artifacts/${appId}/users/${currentUserId}/trips`);
+            const tripsRef = collection(db, `${firestorePathPrefix}/trips`);
             const q = query(tripsRef, firestoreOrderBy('date', 'desc'));
             const tripsUnsub = onSnapshot(q, (querySnapshot) => {
                 const tripsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -968,7 +953,7 @@ export default function App() {
     const debouncedSaveSettings = useCallback(
         debounce((newSettings) => {
             if (userId) {
-                const settingsRef = doc(db, `artifacts/${appId}/users/${userId}/settings`, 'appSettings');
+                const settingsRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/settings`, 'appSettings');
                 setDoc(settingsRef, newSettings, { merge: true }).catch(err => {
                      console.error("Ошибка сохранения настроек:", err);
                      setNotification({ message: 'Не удалось сохранить настройки.', type: 'error' });
@@ -1016,10 +1001,13 @@ export default function App() {
         const fuelIndex = userSettings.expenses.findIndex(e => e.name === "Топливо");
         if(fuelIndex !== -1){
             const newSettings = { ...userSettings };
-            newSettings.expenses[fuelIndex].amount = amount.toFixed(2);
+            const currentAmount = parseNumericInput(newSettings.expenses[fuelIndex].amount);
+            const newAmount = currentAmount + parseNumericInput(amount);
+            newSettings.expenses[fuelIndex].amount = newAmount.toFixed(2);
+            
             setUserSettings(newSettings);
             debouncedSaveSettings(newSettings);
-            setNotification({ message: `Расход "Топливо" обновлен на ${formatCurrency(amount)}`, type: 'success' });
+            setNotification({ message: `К расходу "Топливо" добавлено ${formatCurrency(amount)}`, type: 'success' });
         }
     };
     
@@ -1043,9 +1031,10 @@ export default function App() {
         };
 
         try {
-            const tripsRef = collection(db, `artifacts/${appId}/users/${userId}/trips`);
+            const tripsRef = collection(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`);
             await addDoc(tripsRef, newTrip);
             setNotification({ message: 'Поездка успешно добавлена!', type: 'success' });
+            setNewTripData(INITIAL_TRIP_FORM_STATE);
         } catch (error) {
             console.error("Ошибка добавления поездки:", error);
             setNotification({ message: 'Не удалось добавить поездку.', type: 'error' });
@@ -1065,7 +1054,7 @@ export default function App() {
         };
         
         try {
-            const tripRef = doc(db, `artifacts/${appId}/users/${userId}/trips`, updatedTrip.id);
+            const tripRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`, updatedTrip.id);
             await updateDoc(tripRef, finalTripData);
             setNotification({ message: 'Поездка успешно обновлена!', type: 'success' });
             setEditingTrip(null);
@@ -1088,7 +1077,7 @@ export default function App() {
     const confirmDeleteTrip = async () => {
         if (!userId || !deletingTripId) return;
         try {
-            const tripRef = doc(db, `artifacts/${appId}/users/${userId}/trips`, deletingTripId);
+            const tripRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`, deletingTripId);
             await deleteDoc(tripRef);
             setNotification({ message: 'Поездка удалена.', type: 'success' });
             setDeletingTripId(null);
@@ -1102,6 +1091,20 @@ export default function App() {
     const closeNotification = () => {
         setNotification({ message: '', type: '', onConfirm: null });
     };
+
+    // --- ЭКРАН ОШИБКИ, ЕСЛИ КЛЮЧИ НЕ НАЙДЕНЫ ---
+    if (!areFirebaseKeysAvailable) {
+        return (
+            <div className="min-h-screen bg-red-900 text-white flex flex-col justify-center items-center p-4 text-center">
+                <AlertTriangle className="w-16 h-16 text-yellow-300 mb-4" />
+                <h1 className="text-2xl font-bold mb-2">Критическая Ошибка Конфигурации</h1>
+                <p className="max-w-md">Приложение не может подключиться к базе данных, потому что ключи Firebase не найдены.</p>
+                <p className="mt-4 text-sm text-yellow-200 bg-red-800 p-3 rounded-lg">
+                    <strong>Что делать:</strong> Пожалуйста, вернитесь на сайт Vercel, зайдите в настройки проекта (Settings -> Environment Variables) и убедитесь, что все 6 переменных `VITE_FIREBASE_...` добавлены правильно, без опечаток в именах и значениях.
+                </p>
+            </div>
+        );
+    }
 
     if (isLoading) {
         return (
@@ -1128,8 +1131,8 @@ export default function App() {
                     >
                         {activeTab === 'entry' && (
                             <div className="space-y-6">
-                                <TripForm onAddTrip={handleAddTrip} />
-                                <PreliminaryCalculation tripData={currentTripForm} settings={userSettings} />
+                                <TripForm onAddTrip={handleAddTrip} tripData={newTripData} setTripData={setNewTripData} />
+                                <PreliminaryCalculation tripData={newTripData} settings={userSettings} />
                                 <FuelCheckOCR onFuelExpenseUpdate={handleFuelExpenseUpdate}/>
                                 <SettingsAccordion settings={userSettings} onSettingsChange={handleSettingsChange} onCustomExpenseChange={handleCustomExpenseChange}/>
                             </div>
@@ -1168,3 +1171,4 @@ export default function App() {
         </div>
     );
 }
+
