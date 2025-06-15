@@ -831,7 +831,7 @@ export default function App() {
     const [newTripData, setNewTripData] = useState(INITIAL_TRIP_FORM_STATE);
     const [editingTrip, setEditingTrip] = useState(null);
     const [notification, setNotification] = useState({ message: '', type: '', onConfirm: null });
-    
+
     useEffect(() => {
         const root = window.document.documentElement;
         if (theme === 'dark') {
@@ -1032,6 +1032,14 @@ export default function App() {
         }
     }
     
+    const handleDeleteTrip = (tripId) => {
+        setNotification({
+            message: 'Вы уверены, что хотите удалить эту поездку? Это действие необратимо.',
+            type: 'confirm',
+            onConfirm: () => confirmDeleteAction(tripId)
+        });
+    }
+
     const confirmDeleteAction = async (tripId) => {
         if (!userId || !tripId) return;
         try {
@@ -1042,18 +1050,9 @@ export default function App() {
             console.error("Delete trip error:", error);
             setNotification({ message: 'Не удалось удалить поездку.', type: 'error' });
         } finally {
-            closeNotification(); 
+            closeNotification();
         }
     };
-    
-    const handleDeleteTrip = (tripId) => {
-        setNotification({
-            message: 'Вы уверены, что хотите удалить эту поездку? Это действие необратимо.',
-            type: 'confirm',
-            onConfirm: () => confirmDeleteAction(tripId),
-            onCancel: closeNotification
-        });
-    }
 
     const closeNotification = () => {
         setNotification({ message: '', type: '', onConfirm: null });
