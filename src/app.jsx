@@ -86,7 +86,6 @@ const debounce = (func, delay) => {
 };
 
 // --- ОСНОВНЫЕ КОМПОНЕНТЫ UI (СТИЛИЗОВАННЫЕ) ---
-
 const Card = ({ children, className = '', ...props }) => (
     <motion.div
         initial={{ opacity: 0, y: 20 }}
@@ -134,7 +133,6 @@ const TextareaField = ({ icon: Icon, label, id, value, onChange, placeholder, cl
     </div>
 );
 
-
 const StyledButton = ({ children, onClick, icon: Icon, className = '', type = 'button', disabled = false }) => (
     <button
         type={type}
@@ -165,7 +163,6 @@ const DestructiveButton = ({ children, onClick, icon: Icon, className = '', disa
         </span>
     </button>
 );
-
 
 const CustomToggle = ({ enabled, onChange }) => (
     <div
@@ -218,7 +215,6 @@ const calculateTripProfit = (trip, settings) => {
 };
 
 // --- КОМПОНЕНТЫ ПРИЛОЖЕНИЯ ---
-
 const AppHeader = ({ theme, setTheme, userSettings }) => (
     <header className="sticky top-0 z-40 w-full bg-slate-900/70 backdrop-blur-lg border-b border-slate-800">
         <div className="container mx-auto px-4 sm:px-6 lg:px-8">
@@ -440,10 +436,15 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate }) => {
         setOcrResult(null);
 
         try {
-            const prompt = `Анализируй чек на топливо. Извлеки КАЖДУЮ топливную позицию (дизель, reefer, DEF). Верни СТРОГО JSON массив объектов. Каждый объект должен содержать ТРИ ПОЛЯ: "productName": ТОЧНОЕ название, "gallons": количество галлонов (число, 0 если нет), "cost": стоимость (число, 0 если нет). Если топливных позиций нет, верни пустой массив []. Ответ - ТОЛЬКО JSON.`;
+            const prompt = `КРАЙНЕ ВНИМАТЕЛЬНО проанализируй это изображение чека на топливо. Твоя задача - извлечь информацию о КАЖДОЙ топливной позиции (любой дизель, включая "REEFER FUEL", и DEF/AdBlue). Верни результат СТРОГО в формате JSON массива объектов. Не добавляй никакого текста до или после этого JSON массива. Каждый объект в массиве должен представлять ОДНУ топливную позицию с чека и содержать СЛЕДУЮЩИЕ ТРИ ПОЛЯ: 1. "productName": ТОЧНОЕ название продукта, как оно указано на чеке. 2. "gallons": Количество галлонов для этой ОДНОЙ позиции (число). Если галлоны не указаны, верни 0. 3. "cost": Стоимость для этой ОДНОЙ позиции (число). Если стоимость не указана, верни 0. Если на чеке нет НИ ОДНОЙ топливной позиции, верни пустой массив []. Убедись, что все значения "gallons" и "cost" являются числами. Ответ должен быть ТОЛЬКО JSON массивом.`;
             
             const payload = {
-                contents: [ { parts: [ { text: prompt }, { inline_data: { mime_type: "image/png", data: imageBase64 } } ] } ],
+                contents: [{
+                    parts: [
+                        { text: prompt },
+                        { inline_data: { mime_type: "image/jpeg", data: imageBase64 } }
+                    ]
+                }],
                 generation_config: { response_mime_type: "application/json" }
             };
             
@@ -632,18 +633,10 @@ const PreliminaryCalculation = ({ tripData, settings }) => {
     );
 };
 
-// --- КОМПОНЕНТЫ ЭКРАНА ДНЕВНИКА/ОТЧЕТОВ ---
 const OverallSummary = ({ trips }) => {
     const summary = useMemo(() => {
         if (!trips || trips.length === 0) {
-            return {
-                totalTrips: 0,
-                totalGross: 0,
-                totalMiles: 0,
-                totalProfit: 0,
-                avgRpm: 0,
-                avgProfitPerTrip: 0,
-            };
+            return { totalTrips: 0, totalGross: 0, totalMiles: 0, totalProfit: 0, avgRpm: 0, avgProfitPerTrip: 0 };
         }
         
         const totalGross = trips.reduce((sum, trip) => sum + parseNumericInput(trip.tripGross), 0);
@@ -695,7 +688,7 @@ const TripListItem = ({ trip, onEdit, onDelete }) => (
         <div className="flex justify-between items-start">
             <div>
                 <h3 className="font-bold text-lg text-white">{trip.fromLocation} → {trip.toLocation}</h3>
-                <p className="text-sm text-slate-400">{format(parseISO(trip.date), "d MMMMfirstSending 'г.'", { locale: ru })} - {trip.daysInTrip} дн.</p>
+                <p className="text-sm text-slate-400">{format(parseISO(trip.date), "d MMMM playerId", { locale: ru })} - {trip.daysInTrip} дн.</p>
             </div>
              <div className="flex items-center space-x-2">
                 <button onClick={() => onEdit(trip)} className="p-2 rounded-full text-blue-400 hover:bg-blue-500/20 transition-colors"><Edit3 size={18}/></button>
@@ -747,7 +740,7 @@ const TripsByPeriod = ({ trips, onEdit, onDelete }) => {
                  <button onClick={prevWeek} className="p-3 rounded-lg hover:bg-slate-700 transition-colors"><ChevronsLeft /></button>
                  <div className="text-center">
                     <p className="font-semibold text-white">Неделя {getWeek(currentDate, { weekStartsOn: 1 })}</p>
-                    <p className="text-xs text-slate-400">{format(start, 'd MMM', { locale: ru })} - {format(end, 'd MMM yyyy', { locale: ru })}</p>
+                    <p className="text-xs text-slate-400">{format(start, 'd MMM', { locale: ru })} - {format(end, 'd MMM playerId', { locale: ru })}</p>
                  </div>
                  <button onClick={nextWeek} className="p-3 rounded-lg hover:bg-slate-700 transition-colors"><ChevronsRight /></button>
             </div>
@@ -949,7 +942,6 @@ export default function App() {
         return () => unsub();
     }, []);
 
-    // --- Обработка данных ---
     const debouncedSaveSettings = useCallback(
         debounce((newSettings) => {
             if (userId) {
@@ -964,51 +956,58 @@ export default function App() {
     );
 
     const handleSettingsChange = (key, value) => {
-        const newSettings = { ...userSettings };
-        if (key === 'updateExpense') {
-            newSettings.expenses[value.index].amount = value.value;
-        } else if (key === 'toggleExpense') {
-            newSettings.expenses[value].enabled = !newSettings.expenses[value].enabled;
-        } else {
-            newSettings[key] = value;
-        }
-        setUserSettings(newSettings);
-        debouncedSaveSettings(newSettings);
+        setUserSettings(prevSettings => {
+            const newSettings = { ...prevSettings };
+            if (key === 'updateExpense') {
+                newSettings.expenses[value.index].amount = value.value;
+            } else if (key === 'toggleExpense') {
+                newSettings.expenses[value].enabled = !newSettings.expenses[value].enabled;
+            } else {
+                newSettings[key] = value;
+            }
+            debouncedSaveSettings(newSettings);
+            return newSettings;
+        });
     };
 
     const handleCustomExpenseChange = (action, payload) => {
-        const newSettings = { ...userSettings };
-        switch(action) {
-            case 'add':
-                newSettings.customExpenses = [...(newSettings.customExpenses || []), payload];
-                break;
-            case 'remove':
-                 newSettings.customExpenses.splice(payload, 1);
-                break;
-            case 'toggle':
-                newSettings.customExpenses[payload].enabled = !newSettings.customExpenses[payload].enabled;
-                break;
-            case 'update':
-                newSettings.customExpenses[payload.index].amount = payload.value;
-                break;
-            default: break;
-        }
-        setUserSettings(newSettings);
-        debouncedSaveSettings(newSettings);
+        setUserSettings(prevSettings => {
+            const newSettings = { ...prevSettings, customExpenses: [...(prevSettings.customExpenses || [])] };
+            switch(action) {
+                case 'add':
+                    newSettings.customExpenses.push(payload);
+                    break;
+                case 'remove':
+                     newSettings.customExpenses.splice(payload, 1);
+                    break;
+                case 'toggle':
+                    newSettings.customExpenses[payload].enabled = !newSettings.customExpenses[payload].enabled;
+                    break;
+                case 'update':
+                    newSettings.customExpenses[payload.index].amount = payload.value;
+                    break;
+                default: break;
+            }
+            debouncedSaveSettings(newSettings);
+            return newSettings;
+        });
     }
     
     const handleFuelExpenseUpdate = (amount) => {
-        const fuelIndex = userSettings.expenses.findIndex(e => e.name === "Топливо");
-        if(fuelIndex !== -1){
-            const newSettings = { ...userSettings };
-            const currentAmount = parseNumericInput(newSettings.expenses[fuelIndex].amount);
-            const newAmount = currentAmount + parseNumericInput(amount);
-            newSettings.expenses[fuelIndex].amount = newAmount.toFixed(2);
-            
-            setUserSettings(newSettings);
-            debouncedSaveSettings(newSettings);
-            setNotification({ message: `К расходу "Топливо" добавлено ${formatCurrency(amount)}`, type: 'success' });
-        }
+        setUserSettings(prevSettings => {
+            const newSettings = JSON.parse(JSON.stringify(prevSettings)); // Deep copy
+            const fuelIndex = newSettings.expenses.findIndex(e => e.name === "Топливо");
+            if(fuelIndex !== -1){
+                const currentAmount = parseNumericInput(newSettings.expenses[fuelIndex].amount);
+                const newAmount = currentAmount + parseNumericInput(amount);
+                newSettings.expenses[fuelIndex].amount = newAmount.toFixed(2);
+                
+                debouncedSaveSettings(newSettings);
+                setNotification({ message: `К расходу "Топливо" добавлено ${formatCurrency(amount)}`, type: 'success' });
+                return newSettings;
+            }
+            return prevSettings;
+        });
     };
     
     const handleAddTrip = async (tripData) => {
@@ -1092,7 +1091,6 @@ export default function App() {
         setNotification({ message: '', type: '', onConfirm: null });
     };
 
-    // --- ЭКРАН ОШИБКИ, ЕСЛИ КЛЮЧИ НЕ НАЙДЕНЫ ---
     if (!areFirebaseKeysAvailable) {
         return (
             <div className="min-h-screen bg-red-900 text-white flex flex-col justify-center items-center p-4 text-center">
