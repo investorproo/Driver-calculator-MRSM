@@ -588,31 +588,594 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate, setNotification }) => {
     );
 };
 
-// ... (остальные компоненты)
+const PreliminaryCalculation = ({ tripData, settings }) => {
+    const calc = useMemo(() => calculateTripProfit(tripData, settings), [tripData, settings]);
+    
+    const renderValue = (value) => (
+        <AnimatePresence mode="wait">
+            <motion.span
+                key={value}
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: 10 }}
+                transition={{ duration: 0.2 }}
+            >
+                {formatCurrency(value)}
+            </motion.span>
+        </AnimatePresence>
+    );
 
-// ГЛАВНЫЙ КОМПОНЕНТ
+    return (
+        <Card>
+            <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-4">Предварительный расчет</h2>
+            <div className="space-y-2 text-slate-600 dark:text-slate-300">
+                <div className="flex justify-between items-center">
+                    <span>Расходы компании:</span>
+                    <span className="font-semibold text-red-600 dark:text-red-400">{renderValue(calc.calculatedCompanyDeductions)}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                    <span>Доп. расходы (из настроек):</span>
+                    <span className="font-semibold text-red-600 dark:text-red-400">{renderValue(calc.calculatedAdditionalExpenses)}</span>
+                </div>
+                <hr className="border-slate-300 dark:border-slate-700 my-2"/>
+                <div className="flex justify-between items-center text-lg">
+                    <span className="font-bold text-slate-900 dark:text-white">Всего расходов:</span>
+                    <span className="font-bold text-red-600 dark:text-red-400">{renderValue(calc.calculatedTotalExpenses)}</span>
+                </div>
+                <div className={`flex justify-between items-center text-lg p-2 rounded-lg ${parseNumericInput(calc.calculatedNetProfit) >= 0 ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
+                    <span className="font-bold text-slate-900 dark:text-white">Чистая прибыль:</span>
+                    <span className={`font-bold ${parseNumericInput(calc.calculatedNetProfit) >= 0 ? 'text-green-500' : 'text-red-500'}`}>{renderValue(calc.calculatedNetProfit)}</span>
+                </div>
+                <div className="flex justify-between items-center pt-2">
+                    <span className="text-sm">Rate per Mile (Gross/Miles):</span>
+                    <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">{formatCurrency(calc.calculatedRatePerMile)}</span>
+                </div>
+            </div>
+        </Card>
+    );
+};
+
+const OverallSummary = ({ trips }) => {
+    const summary = useMemo(() => {
+        if (!trips || trips.length === 0) {
+            return { totalTrips: 0, totalGross: 0, totalMiles: 0, totalProfit: 0, avgRpm: 0, avgProfitPerTrip: 0 };
+        }
+        
+        const totalGross = trips.reduce((sum, trip) => sum + parseNumericInput(trip.tripGross), 0);
+        const totalMiles = trips.reduce((sum, trip) => sum + parseNumericInput(trip.tripMiles), 0);
+        const totalProfit = trips.reduce((sum, trip) => sum + parseNumericInput(trip.calculatedNetProfit), 0);
+        
+        return {
+            totalTrips: trips.length,
+            totalGross,
+            totalMiles,
+            totalProfit,
+            avgRpm: totalMiles > 0 ? totalGross / totalMiles : 0,
+            avgProfitPerTrip: trips.length > 0 ? totalProfit / trips.length : 0,
+        };
+    }, [trips]);
+
+    const StatCard = ({ label, value, isCurrency = false, profitColor = false }) => (
+        <div className="bg-slate-100 dark:bg-slate-900/70 p-4 rounded-xl flex-1 text-center min-w-[120px]">
+            <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
+            <p className={`text-xl font-bold ${profitColor ? (value >= 0 ? 'text-green-500' : 'text-red-500') : 'text-slate-800 dark:text-white'}`}>
+                {isCurrency ? formatCurrency(value) : (value?.toLocaleString('en-US') || '0')}
+            </p>
+        </div>
+    );
+    
+    return (
+        <Card>
+            <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-4 flex items-center"><TrendingUp className="mr-2 text-indigo-500 dark:text-indigo-400"/>Общие итоги за все время</h2>
+            <div className="flex flex-wrap gap-3">
+                <StatCard label="Всего поездок" value={summary.totalTrips} />
+                <StatCard label="Общий Gross" value={summary.totalGross} isCurrency />
+                <StatCard label="Общие Мили" value={summary.totalMiles} />
+                <StatCard label="Общая Прибыль" value={summary.totalProfit} isCurrency profitColor />
+                <StatCard label="Общий RPM" value={summary.avgRpm} isCurrency />
+                <StatCard label="Средняя прибыль/поездка" value={summary.avgProfitPerTrip} isCurrency profitColor />
+            </div>
+        </Card>
+    );
+}
+
+const TripListItem = ({ trip, onEdit, onDelete }) => {
+    const tripDate = parseISO(trip.date);
+    const formattedDate = isValid(tripDate) 
+        ? format(tripDate, "d MMMM yyyy 'г.'", { locale: ru })
+        : "Неверная дата";
+
+    return (
+        <motion.div
+            layout
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="bg-slate-100 dark:bg-slate-900/50 p-4 rounded-xl border border-slate-200 dark:border-slate-700 space-y-3"
+        >
+            <div className="flex justify-between items-start">
+                <div>
+                    <h3 className="font-bold text-lg text-slate-800 dark:text-white">{trip.fromLocation} → {trip.toLocation}</h3>
+                    <p className="text-sm text-slate-500 dark:text-slate-400">{formattedDate} - {trip.daysInTrip} дн.</p>
+                </div>
+                 <div className="flex items-center space-x-2">
+                    <button onClick={() => onEdit(trip)} className="p-2 rounded-full text-blue-500 dark:text-blue-400 hover:bg-blue-500/10 dark:hover:bg-blue-500/20 transition-colors"><Edit3 size={18}/></button>
+                    <button onClick={() => onDelete(trip.id)} className="p-2 rounded-full text-red-500 dark:text-red-400 hover:bg-red-500/10 dark:hover:bg-red-500/20 transition-colors"><Trash2 size={18}/></button>
+                </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-center text-sm">
+                <div className="bg-slate-200/70 dark:bg-slate-800/50 p-2 rounded-md">
+                    <p className="text-xs text-slate-500 dark:text-slate-500">Gross</p>
+                    <p className="font-semibold text-slate-800 dark:text-white">{formatCurrency(trip.tripGross)}</p>
+                </div>
+                 <div className="bg-slate-200/70 dark:bg-slate-800/50 p-2 rounded-md">
+                    <p className="text-xs text-slate-500 dark:text-slate-500">Мили</p>
+                    <p className="font-semibold text-slate-800 dark:text-white">{trip.tripMiles}</p>
+                </div>
+                 <div className={`p-2 rounded-md ${trip.calculatedNetProfit >= 0 ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
+                    <p className="text-xs text-slate-500 dark:text-slate-500">Прибыль</p>
+                    <p className={`font-semibold ${trip.calculatedNetProfit >= 0 ? 'text-green-500' : 'text-red-500'}`}>{formatCurrency(trip.calculatedNetProfit)}</p>
+                </div>
+            </div>
+            {trip.notes && (
+                <p className="text-sm text-slate-500 dark:text-slate-400 italic bg-slate-200/70 dark:bg-slate-800/50 p-2 rounded-md">Заметка: {trip.notes}</p>
+            )}
+        </motion.div>
+    )
+}
+
+const TripsByPeriod = ({ trips, onEdit, onDelete }) => {
+    const [currentDate, setCurrentDate] = useState(new Date());
+
+    const start = startOfWeek(currentDate, { weekStartsOn: 1 });
+    const end = endOfWeek(currentDate, { weekStartsOn: 1 });
+
+    const filteredTrips = useMemo(() => {
+        return (trips || [])
+            .filter(trip => {
+                const tripDate = parseISO(trip.date);
+                return isValid(tripDate) && tripDate >= start && tripDate <= end;
+            })
+            .sort((a, b) => parseISO(b.date) - parseISO(a.date));
+    }, [trips, start, end]);
+
+    const prevWeek = () => setCurrentDate(new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000));
+    const nextWeek = () => setCurrentDate(new Date(currentDate.getTime() + 7 * 24 * 60 * 60 * 1000));
+    
+    return (
+        <Card>
+            <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-4">Поездки по неделям</h2>
+            <div className="flex justify-between items-center mb-4 bg-slate-100 dark:bg-slate-900/70 p-2 rounded-xl">
+                 <button onClick={prevWeek} className="p-3 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"><ChevronsLeft /></button>
+                 <div className="text-center">
+                    <p className="font-semibold text-slate-800 dark:text-white">Неделя {getWeek(currentDate, { weekStartsOn: 1 })}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{format(start, 'd MMM', { locale: ru })} - {format(end, 'd MMM yyyy', { locale: ru })}</p>
+                 </div>
+                 <button onClick={nextWeek} className="p-3 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"><ChevronsRight /></button>
+            </div>
+            <div className="space-y-4 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
+                <AnimatePresence>
+                {filteredTrips.length > 0 ? (
+                    filteredTrips.map(trip => <TripListItem key={trip.id} trip={trip} onEdit={onEdit} onDelete={onDelete} />)
+                ) : (
+                    <motion.p layout className="text-center text-slate-500 dark:text-slate-400 py-8">Нет поездок за эту неделю.</motion.p>
+                )}
+                </AnimatePresence>
+            </div>
+        </Card>
+    );
+};
+
+const EditTripModal = ({ trip, onSave, onCancel }) => {
+    const [editData, setEditData] = useState(trip);
+
+    useEffect(() => {
+        setEditData(trip);
+    }, [trip]);
+
+    const handleChange = (e) => {
+        const { id, value } = e.target;
+        setEditData(prev => ({ ...prev, [id]: value }));
+    };
+
+    const handleSave = () => {
+        onSave(editData);
+    };
+
+    if (!trip) return null;
+
+    return (
+        <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 z-50 flex justify-center items-center p-4"
+        >
+            <motion.div 
+                 initial={{ scale: 0.9, opacity: 0 }}
+                 animate={{ scale: 1, opacity: 1 }}
+                 exit={{ scale: 0.9, opacity: 0 }}
+                 className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 w-full max-w-2xl max-h-[90vh] overflow-y-auto custom-scrollbar relative"
+            >
+                <h2 className="text-2xl font-bold text-slate-800 dark:text-white mb-6">Редактировать поездку</h2>
+                <button onClick={onCancel} className="absolute top-4 right-4 p-2 rounded-full text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"><X size={20}/></button>
+
+                <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <InputField id="date" label="Дата" type="date" value={editData.date} onChange={handleChange} required icon={CalendarDays} />
+                        <InputField id="daysInTrip" label="Дней в поездке" type="number" value={editData.daysInTrip} onChange={handleChange} required icon={Clock} placeholder="1" />
+                        <InputField id="fromLocation" label="Откуда" type="text" value={editData.fromLocation} onChange={handleChange} required icon={MapPin} placeholder="Город, Штат"/>
+                        <InputField id="toLocation" label="Куда" type="text" value={editData.toLocation} onChange={handleChange} required icon={MapPin} placeholder="Город, Штат"/>
+                        <InputField id="tripGross" label="Gross за поездку ($)" type="number" value={editData.tripGross} onChange={handleChange} required icon={DollarSign} placeholder="0.00"/>
+                        <InputField id="tripMiles" label="Мили за поездку" type="number" value={editData.tripMiles} onChange={handleChange} required icon={TrendingUp} placeholder="0"/>
+                    </div>
+                    <TextareaField id="notes" label="Заметки" value={editData.notes} onChange={handleChange} icon={FileText} placeholder="Любая дополнительная информация" />
+                </div>
+                <div className="flex justify-end items-center gap-4 mt-8">
+                     <button onClick={onCancel} className="px-6 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">Отмена</button>
+                     <StyledButton onClick={handleSave} icon={Save} className="bg-gradient-to-br from-green-600 to-teal-600">Сохранить</StyledButton>
+                </div>
+            </motion.div>
+        </motion.div>
+    );
+}
+
+const NotificationModal = ({ message, type, onConfirm, onCancel }) => {
+    if(!message) return null;
+    
+    const icons = {
+        success: <Plus className="w-8 h-8 text-green-500 dark:text-green-400"/>,
+        error: <AlertTriangle className="w-8 h-8 text-red-500 dark:text-red-400"/>,
+        confirm: <AlertTriangle className="w-8 h-8 text-yellow-500 dark:text-yellow-400"/>
+    };
+
+    return (
+        <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 z-50 flex justify-center items-center p-4"
+        >
+             <motion.div 
+                 initial={{ scale: 0.9, opacity: 0 }}
+                 animate={{ scale: 1, opacity: 1 }}
+                 exit={{ scale: 0.9, opacity: 0 }}
+                 className="bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-2xl p-6 w-full max-w-sm text-center"
+            >
+                <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-slate-100 dark:bg-slate-900 mb-4">
+                    {icons[type]}
+                </div>
+                <p className="text-slate-800 dark:text-white font-semibold mb-6">{message}</p>
+                {type === 'confirm' ? (
+                     <div className="flex justify-center gap-4">
+                         <button onClick={onCancel} className="px-6 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors flex-1">Отмена</button>
+                         <DestructiveButton onClick={onConfirm} className="flex-1">Удалить</DestructiveButton>
+                     </div>
+                ) : (
+                    <StyledButton onClick={onCancel}>OK</StyledButton>
+                )}
+            </motion.div>
+        </motion.div>
+    )
+}
+
+// --- ГЛАВНЫЙ КОМПОНЕНТ ПРИЛОЖЕНИЯ ---
 export default function App() {
     const [theme, setTheme] = useState(localStorage.getItem('theme') || 'dark');
-    // ... остальной код App
-    
+    const [activeTab, setActiveTab] = useState('entry');
+    const [userId, setUserId] = useState(null);
+    const [userSettings, setUserSettings] = useState(DEFAULT_USER_SETTINGS);
+    const [trips, setTrips] = useState([]);
+    const [isLoading, setIsLoading] = useState(true);
+    const [isAuthComplete, setIsAuthComplete] = useState(false);
+    const [newTripData, setNewTripData] = useState(INITIAL_TRIP_FORM_STATE);
+    const [editingTrip, setEditingTrip] = useState(null);
+    const [notification, setNotification] = useState({ message: '', type: '', onConfirm: null });
+    const [deletingTripId, setDeletingTripId] = useState(null);
+
     useEffect(() => {
         const root = window.document.documentElement;
         if (theme === 'dark') {
-            root.classList.remove('light');
             root.classList.add('dark');
         } else {
             root.classList.remove('dark');
-            root.classList.add('light');
         }
         localStorage.setItem('theme', theme);
     }, [theme]);
 
-    // ... остальной код App
+    useEffect(() => {
+        if (!areFirebaseKeysAvailable) {
+            setIsLoading(false);
+            return;
+        }
+
+        const unsub = onAuthStateChanged(auth, async (authUser) => {
+            if (authUser) {
+                setUserId(authUser.uid);
+            } else {
+                try {
+                    const initialToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+                    if(initialToken){
+                       await signInWithCustomToken(auth, initialToken);
+                    } else {
+                       await signInAnonymously(auth);
+                    }
+                } catch (error) {
+                    console.error("Authentication error:", error);
+                    setNotification({ message: 'Не удалось войти. Данные не будут сохраняться.', type: 'error' });
+                }
+            }
+            setIsAuthComplete(true);
+        });
+
+        return () => unsub();
+    }, []);
+
+    useEffect(() => {
+        if (!isAuthComplete || !userId) {
+            if (isAuthComplete) setIsLoading(false);
+            return;
+        };
+
+        const firestorePathPrefix = `artifacts/${firebaseConfig.projectId}/users/${userId}`;
+        
+        const settingsRef = doc(db, `${firestorePathPrefix}/settings`, 'appSettings');
+        const settingsUnsub = onSnapshot(settingsRef, (docSnap) => {
+            if (docSnap.exists()) {
+                setUserSettings(docSnap.data());
+            } else {
+                setDoc(settingsRef, DEFAULT_USER_SETTINGS);
+                setUserSettings(DEFAULT_USER_SETTINGS);
+            }
+            setIsLoading(false);
+        }, (error) => {
+            console.error("Settings loading error:", error);
+            setNotification({ message: 'Ошибка загрузки настроек.', type: 'error' });
+            setIsLoading(false);
+        });
+
+        const tripsRef = collection(db, `${firestorePathPrefix}/trips`);
+        const q = query(tripsRef, firestoreOrderBy('date', 'desc'));
+        const tripsUnsub = onSnapshot(q, (querySnapshot) => {
+            const tripsData = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setTrips(tripsData);
+        }, (error) => {
+            console.error("Trips loading error:", error);
+            setNotification({ message: 'Ошибка загрузки поездок.', type: 'error' });
+        });
+        
+        return () => {
+            settingsUnsub();
+            tripsUnsub();
+        };
+    }, [isAuthComplete, userId]);
+
+    const debouncedSaveSettings = useCallback(
+        debounce((newSettings) => {
+            if (userId) {
+                const settingsRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/settings`, 'appSettings');
+                setDoc(settingsRef, newSettings, { merge: true }).catch(err => {
+                     console.error("Settings save error:", err);
+                     setNotification({ message: 'Не удалось сохранить настройки.', type: 'error' });
+                });
+            }
+        }, 1000),
+        [userId]
+    );
+
+    const handleSettingsChange = (key, value) => {
+        setUserSettings(prevSettings => {
+            const newSettings = JSON.parse(JSON.stringify(prevSettings));
+            if (key === 'updateExpense') {
+                newSettings.expenses[value.index].amount = value.value;
+            } else if (key === 'toggleExpense') {
+                newSettings.expenses[value].enabled = !newSettings.expenses[value].enabled;
+            } else {
+                newSettings[key] = value;
+            }
+            debouncedSaveSettings(newSettings);
+            return newSettings;
+        });
+    };
+
+    const handleCustomExpenseChange = (action, payload) => {
+        setUserSettings(prevSettings => {
+            const newSettings = JSON.parse(JSON.stringify(prevSettings));
+            if(!newSettings.customExpenses) newSettings.customExpenses = [];
+
+            switch(action) {
+                case 'add':
+                    newSettings.customExpenses.push(payload);
+                    break;
+                case 'remove':
+                     newSettings.customExpenses.splice(payload, 1);
+                    break;
+                case 'toggle':
+                    newSettings.customExpenses[payload].enabled = !newSettings.customExpenses[payload].enabled;
+                    break;
+                case 'update':
+                    newSettings.customExpenses[payload.index].amount = payload.value;
+                    break;
+                default: break;
+            }
+            debouncedSaveSettings(newSettings);
+            return newSettings;
+        });
+    }
+    
+    const handleFuelExpenseUpdate = (amount) => {
+        setUserSettings(prevSettings => {
+            const newSettings = JSON.parse(JSON.stringify(prevSettings));
+            const fuelIndex = newSettings.expenses.findIndex(e => e.name === "Топливо");
+            if(fuelIndex !== -1){
+                const currentAmount = parseNumericInput(newSettings.expenses[fuelIndex].amount);
+                const newAmount = currentAmount + parseNumericInput(amount);
+                newSettings.expenses[fuelIndex].amount = newAmount.toFixed(2);
+                
+                debouncedSaveSettings(newSettings);
+                setNotification({ message: `К расходу "Топливо" добавлено ${formatCurrency(amount)}`, type: 'success' });
+                return newSettings;
+            }
+            return prevSettings;
+        });
+    };
+    
+    const handleAddTrip = async (tripData) => {
+        if (!userId) {
+             setNotification({ message: 'Вы не авторизованы. Поездка не будет сохранена.', type: 'error' });
+             return;
+        }
+        if(!tripData.tripGross || !tripData.tripMiles){
+             setNotification({ message: 'Пожалуйста, заполните поля Gross и Мили.', type: 'error' });
+             return;
+        }
+
+        const calculatedValues = calculateTripProfit(tripData, userSettings);
+        const newTrip = {
+            ...tripData,
+            ...calculatedValues,
+            userId,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+        };
+
+        try {
+            const tripsRef = collection(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`);
+            await addDoc(tripsRef, newTrip);
+            setNotification({ message: 'Поездка успешно добавлена!', type: 'success' });
+            setNewTripData(INITIAL_TRIP_FORM_STATE);
+        } catch (error) {
+            console.error("Add trip error:", error);
+            setNotification({ message: 'Не удалось добавить поездку.', type: 'error' });
+        }
+    };
+    
+    const handleUpdateTrip = async (updatedTrip) => {
+        if(!userId || !updatedTrip.id){
+             setNotification({ message: 'Ошибка обновления поездки.', type: 'error' });
+             return;
+        }
+        const calculatedValues = calculateTripProfit(updatedTrip, userSettings);
+        const finalTripData = {
+            ...updatedTrip,
+            ...calculatedValues,
+            updatedAt: serverTimestamp()
+        };
+        
+        try {
+            const tripRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`, updatedTrip.id);
+            await updateDoc(tripRef, finalTripData);
+            setNotification({ message: 'Поездка успешно обновлена!', type: 'success' });
+            setEditingTrip(null);
+        } catch (error) {
+            console.error("Update trip error:", error);
+            setNotification({ message: 'Не удалось обновить поездку.', type: 'error' });
+        }
+    }
+    
+    const handleDeleteTrip = (tripId) => {
+        setDeletingTripId(tripId);
+        setNotification({
+            message: 'Вы уверены, что хотите удалить эту поездку? Это действие необратимо.',
+            type: 'confirm',
+            onConfirm: () => confirmDeleteTrip(),
+            onCancel: closeNotification
+        });
+    }
+
+    const confirmDeleteTrip = async () => {
+        if (!userId || !deletingTripId) return;
+        try {
+            const tripRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`, deletingTripId);
+            await deleteDoc(tripRef);
+            setNotification({ message: 'Поездка удалена.', type: 'success' });
+        } catch (error) {
+            console.error("Delete trip error:", error);
+            setNotification({ message: 'Не удалось удалить поездку.', type: 'error' });
+        } finally {
+            setDeletingTripId(null);
+        }
+    };
+
+    const closeNotification = () => {
+        setNotification({ message: '', type: '', onConfirm: null });
+    };
+
+    if (!areFirebaseKeysAvailable) {
+        return (
+            <div className="min-h-screen bg-red-900 text-white flex flex-col justify-center items-center p-4 text-center">
+                <AlertTriangle className="w-16 h-16 text-yellow-300 mb-4" />
+                <h1 className="text-2xl font-bold mb-2">Критическая Ошибка Конфигурации</h1>
+                <p className="max-w-md">Приложение не может подключиться к базе данных, потому что ключи Firebase не найдены.</p>
+                <p className="mt-4 text-sm text-yellow-200 bg-red-800 p-3 rounded-lg">
+                    <strong>Что делать:</strong> Пожалуйста, вернитесь на сайт Vercel, зайдите в настройки проекта (Settings -> Environment Variables) и убедитесь, что все 6 переменных `VITE_FIREBASE_...` добавлены правильно, без опечаток в именах и значениях.
+                </p>
+            </div>
+        );
+    }
+
+    if (isLoading && !isAuthComplete) {
+        return (
+            <div className="min-h-screen bg-slate-100 dark:bg-slate-900 flex flex-col justify-center items-center text-slate-800 dark:text-white">
+                <Loader2 className="h-12 w-12 animate-spin text-indigo-500 dark:text-indigo-400 mb-4" />
+                <p className="text-lg">Подключение к сервисам...</p>
+            </div>
+        );
+    }
 
     return (
         <div className={`min-h-screen font-sans bg-slate-100 dark:bg-gradient-to-br dark:from-slate-900 dark:via-slate-800 dark:to-blue-950 text-slate-700 dark:text-slate-300 transition-colors duration-300`}>
-            {/* ... */}
+            <AppHeader theme={theme} setTheme={setTheme} userSettings={userSettings} />
+            <main className="container mx-auto px-2 sm:px-4 lg:px-6 pb-8">
+                <NavigationTabs activeTab={activeTab} setActiveTab={setActiveTab} />
+                
+                <AnimatePresence mode="wait">
+                    <motion.div
+                        key={activeTab}
+                        initial={{ opacity: 0, x: activeTab === 'entry' ? -50 : 50 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: activeTab === 'entry' ? 50 : -50 }}
+                        transition={{ duration: 0.3 }}
+                    >
+                        {activeTab === 'entry' && (
+                            <div className="space-y-6">
+                                <TripForm onAddTrip={handleAddTrip} tripData={newTripData} setTripData={setNewTripData} />
+                                <PreliminaryCalculation tripData={newTripData} settings={userSettings} />
+                                <FuelCheckOCR onFuelExpenseUpdate={handleFuelExpenseUpdate} setNotification={setNotification} />
+                                <SettingsAccordion settings={userSettings} onSettingsChange={handleSettingsChange} onCustomExpenseChange={handleCustomExpenseChange}/>
+                            </div>
+                        )}
+
+                        {activeTab === 'diary' && (
+                            <div className="space-y-6">
+                                <OverallSummary trips={trips}/>
+                                <TripsByPeriod trips={trips} onEdit={setEditingTrip} onDelete={handleDeleteTrip}/>
+                            </div>
+                        )}
+                    </motion.div>
+                </AnimatePresence>
+            </main>
+            
+            <AnimatePresence>
+                {editingTrip && (
+                    <EditTripModal 
+                        trip={editingTrip} 
+                        onSave={handleUpdateTrip} 
+                        onCancel={() => setEditingTrip(null)}
+                    />
+                )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+                {notification.message && (
+                    <NotificationModal 
+                        message={notification.message} 
+                        type={notification.type} 
+                        onConfirm={notification.onConfirm || closeNotification}
+                        onCancel={closeNotification} 
+                    />
+                )}
+            </AnimatePresence>
         </div>
     );
 }
-
