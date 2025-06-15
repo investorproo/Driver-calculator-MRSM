@@ -479,7 +479,6 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate, setNotification }) => {
         }
     };
     
-    // ИСПРАВЛЕНИЕ: Функция теперь автоматически вызывает onFuelExpenseUpdate
     const processOcrResult = (items) => {
         let totalAllDieselGallons = 0;
         let totalAllDieselCostBeforeDiscount = 0;
@@ -508,7 +507,7 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate, setNotification }) => {
         
         if (finalCombinedExpense > 0) {
             onFuelExpenseUpdate(finalCombinedExpense);
-            setImageFile(null); // Сбрасываем файлы после успешного добавления
+            setImageFile(null); 
             setImageBase64('');
         } else {
              setNotification({ message: "Не удалось рассчитать итоговую сумму по чеку. Убедитесь, что на фото видны стоимость и галлоны.", type: 'error' });
