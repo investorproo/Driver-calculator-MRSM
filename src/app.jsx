@@ -33,7 +33,8 @@ if (areFirebaseKeysAvailable) {
 
 // --- КОНСТАНТЫ ---
 const DIESEL_DISCOUNT_PER_GALLON = 0.60;
-const ALL_DIESEL_KEYWORDS = ["diesel", "dsl", "fuel", "reefer"];
+// ИСПРАВЛЕНИЕ: Расширяем "словарный запас" AI
+const ALL_DIESEL_KEYWORDS = ["diesel", "dsl", "fuel", "reefer", "trkds", "trk dsl"];
 const DEF_KEYWORDS = ["def", "adblue"];
 
 const DEFAULT_USER_SETTINGS = {
@@ -65,13 +66,12 @@ const INITIAL_TRIP_FORM_STATE = {
 // --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 const parseNumericInput = (value) => {
     if (value === null || value === undefined || value === '') return 0;
-    const num = parseFloat(value);
+    const num = parseFloat(String(value).replace(/,/g, '.'));
     return isNaN(num) ? 0 : num;
 };
 
 const formatCurrency = (value) => {
     const num = parseNumericInput(value);
-    // Напоминание: мы договорились всегда использовать доллары.
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
 };
 
@@ -401,12 +401,11 @@ const SettingsAccordion = ({ settings, onSettingsChange, onCustomExpenseChange }
     );
 };
 
-const FuelCheckOCR = ({ onFuelExpenseUpdate }) => {
+const FuelCheckOCR = ({ onFuelExpenseUpdate, setNotification }) => {
     const [imageFile, setImageFile] = useState(null);
     const [imageBase64, setImageBase64] = useState('');
     const [isLoading, setIsLoading] = useState(false);
     const [ocrResult, setOcrResult] = useState(null);
-    const [error, setError] = useState('');
     const fileInputRef = React.useRef(null);
 
     const handleFileChange = (e) => {
@@ -417,7 +416,7 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate }) => {
             reader.onloadend = () => {
                 setImageBase64(reader.result.split(',')[1]);
                 setOcrResult(null);
-                setError('');
+                setNotification({ message: '' }); 
             };
             reader.readAsDataURL(file);
         }
@@ -425,15 +424,16 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate }) => {
 
     const handleRecognize = async () => {
         if (!imageBase64) {
-            setError('Пожалуйста, сначала загрузите изображение чека.');
+            setNotification({ message: 'Пожалуйста, сначала загрузите изображение чека.', type: 'error' });
             return;
         }
         setIsLoading(true);
-        setError('');
         setOcrResult(null);
+        setNotification({ message: '' });
 
         try {
-            const prompt = `КРАЙНЕ ВНИМАТЕЛЬНО проанализируй это изображение чека на топливо. Твоя задача - извлечь информацию о КАЖДОЙ топливной позиции (любой дизель, включая "REEFER FUEL", и DEF/AdBlue). Верни результат СТРОГО в формате JSON массива объектов. Не добавляй никакого текста до или после этого JSON массива. Каждый объект в массиве должен представлять ОДНУ топливную позицию с чека и содержать СЛЕДУЮЩИЕ ТРИ ПОЛЯ: 1. "productName": ТОЧНОЕ название продукта, как оно указано на чеке. 2. "gallons": Количество галлонов для этой ОДНОЙ позиции (число). Если галлоны не указаны, верни 0. 3. "cost": Стоимость для этой ОДНОЙ позиции (число). Если стоимость не указана, верни 0. Если на чеке нет НИ ОДНОЙ топливной позиции, верни пустой массив []. Убедись, что все значения "gallons" и "cost" являются числами. Ответ должен быть ТОЛЬКО JSON массивом.`;
+            // ИСПРАВЛЕНИЕ: Промпт стал еще умнее и подробнее
+            const prompt = `КРАЙНЕ ВНИМАТЕЛЬНО проанализируй это изображение чека на топливо. Твоя задача - извлечь информацию о КАЖДОЙ топливной позиции (любой дизель, включая "REEFER FUEL", "TRKDS", "TRK DSL", "AUTO DSL", и DEF/AdBlue). Верни результат СТРОГО в формате JSON массива объектов. Не добавляй никакого текста до или после этого JSON массива. Каждый объект в массиве должен представлять ОДНУ топливную позицию с чека и содержать СЛЕДУЮЩИЕ ТРИ ПОЛЯ: 1. "productName": ТОЧНОЕ название продукта, как оно указано на чеке. 2. "gallons": Количество галлонов для этой ОДНОЙ позиции (число). Если галлоны не указаны, верни 0. 3. "cost": Стоимость для этой ОДНОЙ позиции (число). Если стоимость не указана, верни 0. Если на чеке нет НИ ОДНОЙ топливной позиции, верни пустой массив []. Убедись, что все значения "gallons" и "cost" являются числами. Ответ должен быть ТОЛЬКО JSON массивом.`;
             
             const payload = {
                 contents: [{
@@ -467,14 +467,18 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate }) => {
 
             if (result.candidates && result.candidates[0].content && result.candidates[0].content.parts.length > 0) {
                 const parsedResult = JSON.parse(result.candidates[0].content.parts[0].text);
-                processOcrResult(parsedResult);
+                if (Array.isArray(parsedResult) && parsedResult.length > 0) {
+                   processOcrResult(parsedResult);
+                } else {
+                   throw new Error("Не удалось распознать топливные позиции на чеке. Попробуйте сделать фото четче.");
+                }
             } else {
                 throw new Error("Не удалось распознать данные. Ответ от AI некорректен.");
             }
 
         } catch (err) {
             console.error(err);
-            setError(err.message || 'Произошла неизвестная ошибка при распознавании.');
+            setNotification({ message: err.message || 'Произошла неизвестная ошибка при распознавании.', type: 'error' });
         } finally {
             setIsLoading(false);
         }
@@ -505,6 +509,11 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate }) => {
         
         const finalAllDieselCostAfterDiscount = totalAllDieselCostBeforeDiscount - totalDiscountOnAllDiesel;
         const finalCombinedExpense = (finalAllDieselCostAfterDiscount > 0 ? finalAllDieselCostAfterDiscount : 0) + totalDefCost;
+        
+        if (finalCombinedExpense <= 0) {
+            setNotification({ message: "Не удалось рассчитать итоговую сумму по чеку. Убедитесь, что на фото видны стоимость и галлоны.", type: 'error' });
+            return;
+        }
 
         setOcrResult({
             totalAllDieselGallons,
@@ -516,7 +525,7 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate }) => {
     };
     
     const handleAddExpense = () => {
-        if(ocrResult && ocrResult.finalCombinedExpense >= 0) {
+        if(ocrResult && ocrResult.finalCombinedExpense > 0) {
             onFuelExpenseUpdate(ocrResult.finalCombinedExpense);
             setOcrResult(null);
             setImageFile(null);
@@ -546,15 +555,13 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate }) => {
 
                 {imageBase64 && (
                      <div className="flex justify-center">
-                        <img src={`data:image/png;base64,${imageBase64}`} alt="Превью чека" className="max-h-48 rounded-lg shadow-lg"/>
+                        <img src={`data:image/jpeg;base64,${imageBase64}`} alt="Превью чека" className="max-h-48 rounded-lg shadow-lg"/>
                      </div>
                 )}
                 
                 <StyledButton onClick={handleRecognize} icon={Play} disabled={!imageBase64 || isLoading} className="bg-gradient-to-br from-purple-600 to-indigo-600">
                     {isLoading ? <><Loader2 className="animate-spin mr-2"/> Обработка...</> : "Распознать чек"}
                 </StyledButton>
-
-                {error && <p className="text-sm text-red-400 text-center">{error}</p>}
                 
                 <AnimatePresence>
                 {ocrResult && (
@@ -675,7 +682,6 @@ const OverallSummary = ({ trips }) => {
 }
 
 const TripListItem = ({ trip, onEdit, onDelete }) => {
-    // ИСПРАВЛЕНИЕ: Добавляем проверку, что дата действительна, перед форматированием
     const tripDate = parseISO(trip.date);
     const formattedDate = isValid(tripDate) 
         ? format(tripDate, "d MMMM yyyy 'г.'", { locale: ru })
@@ -692,7 +698,6 @@ const TripListItem = ({ trip, onEdit, onDelete }) => {
             <div className="flex justify-between items-start">
                 <div>
                     <h3 className="font-bold text-lg text-white">{trip.fromLocation} → {trip.toLocation}</h3>
-                    {/* ИСПРАВЛЕНИЕ: Используем проверенную и отформатированную дату */}
                     <p className="text-sm text-slate-400">{formattedDate} - {trip.daysInTrip} дн.</p>
                 </div>
                  <div className="flex items-center space-x-2">
@@ -728,7 +733,7 @@ const TripsByPeriod = ({ trips, onEdit, onDelete }) => {
     const end = endOfWeek(currentDate, { weekStartsOn: 1 });
 
     const filteredTrips = useMemo(() => {
-        return (trips || []) // Добавлена проверка на случай, если trips еще не загрузились
+        return (trips || [])
             .filter(trip => {
                 const tripDate = parseISO(trip.date);
                 return isValid(tripDate) && tripDate >= start && tripDate <= end;
@@ -860,7 +865,6 @@ const NotificationModal = ({ message, type, onConfirm, onCancel }) => {
 export default function App() {
     const [theme, setTheme] = useState('dark');
     const [activeTab, setActiveTab] = useState('entry');
-    const [user, setUser] = useState(null);
     const [userId, setUserId] = useState(null);
     const [userSettings, setUserSettings] = useState(DEFAULT_USER_SETTINGS);
     const [trips, setTrips] = useState([]);
@@ -884,7 +888,6 @@ export default function App() {
 
         const unsub = onAuthStateChanged(auth, async (authUser) => {
             if (authUser) {
-                setUser(authUser);
                 setUserId(authUser.uid);
             } else {
                 try {
@@ -899,7 +902,6 @@ export default function App() {
                     setNotification({ message: 'Не удалось войти. Данные не будут сохраняться.', type: 'error' });
                 }
             }
-            // ИСПРАВЛЕНИЕ ЗАГРУЗКИ: Говорим, что аутентификация завершена, чтобы убрать долгую загрузку
             setIsAuthComplete(true);
         });
 
@@ -908,13 +910,12 @@ export default function App() {
 
     useEffect(() => {
         if (!isAuthComplete || !userId) {
-            if (isAuthComplete) setIsLoading(false); // Убираем загрузчик, если auth прошел, но нет userId
+            if (isAuthComplete) setIsLoading(false);
             return;
         };
 
         const firestorePathPrefix = `artifacts/${firebaseConfig.projectId}/users/${userId}`;
         
-        // Загрузка настроек
         const settingsRef = doc(db, `${firestorePathPrefix}/settings`, 'appSettings');
         const settingsUnsub = onSnapshot(settingsRef, (docSnap) => {
             if (docSnap.exists()) {
@@ -923,14 +924,13 @@ export default function App() {
                 setDoc(settingsRef, DEFAULT_USER_SETTINGS);
                 setUserSettings(DEFAULT_USER_SETTINGS);
             }
-            setIsLoading(false); // Убираем загрузчик после загрузки настроек
+            setIsLoading(false);
         }, (error) => {
             console.error("Settings loading error:", error);
             setNotification({ message: 'Ошибка загрузки настроек.', type: 'error' });
             setIsLoading(false);
         });
 
-        // Загрузка поездок
         const tripsRef = collection(db, `${firestorePathPrefix}/trips`);
         const q = query(tripsRef, firestoreOrderBy('date', 'desc'));
         const tripsUnsub = onSnapshot(q, (querySnapshot) => {
@@ -1121,7 +1121,7 @@ export default function App() {
     }
 
     return (
-        <div className={`min-h-screen font-sans bg-gradient-to-br from-slate-900 via-slate-800 to-blue-950 text-slate-300`}>
+        <div className={`min-h-screen font-sans bg-gradient-to-br from-slate-900 via-slate-800 to-blue-950 text-slate-300 dark`}>
             <AppHeader theme={theme} setTheme={setTheme} userSettings={userSettings} />
             <main className="container mx-auto px-2 sm:px-4 lg:px-6 pb-8">
                 <NavigationTabs activeTab={activeTab} setActiveTab={setActiveTab} />
@@ -1138,7 +1138,7 @@ export default function App() {
                             <div className="space-y-6">
                                 <TripForm onAddTrip={handleAddTrip} tripData={newTripData} setTripData={setNewTripData} />
                                 <PreliminaryCalculation tripData={newTripData} settings={userSettings} />
-                                <FuelCheckOCR onFuelExpenseUpdate={handleFuelExpenseUpdate}/>
+                                <FuelCheckOCR onFuelExpenseUpdate={handleFuelExpenseUpdate} setNotification={setNotification} />
                                 <SettingsAccordion settings={userSettings} onSettingsChange={handleSettingsChange} onCustomExpenseChange={handleCustomExpenseChange}/>
                             </div>
                         )}
@@ -1176,4 +1176,3 @@ export default function App() {
         </div>
     );
 }
-
