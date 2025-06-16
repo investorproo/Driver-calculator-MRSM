@@ -842,9 +842,12 @@ export default function App() {
     }, [theme]);
 
     useEffect(() => {
-        if (!areFirebaseKeysAvailable) return;
+        if (!areFirebaseKeysAvailable) {
+            setIsAuthComplete(true);
+            return;
+        }
 
-        return onAuthStateChanged(auth, async (user) => {
+        const unsub = onAuthStateChanged(auth, async (user) => {
             if (user) {
                 setUserId(user.uid);
             } else {
@@ -857,6 +860,8 @@ export default function App() {
             }
             setIsAuthComplete(true);
         });
+
+        return () => unsub();
     }, []);
 
     useEffect(() => {
@@ -869,11 +874,9 @@ export default function App() {
         
         const settingsRef = doc(db, `${firestorePathPrefix}/settings`, 'appSettings');
         const settingsUnsub = onSnapshot(settingsRef, (docSnap) => {
-            if (docSnap.exists()) {
-                setUserSettings(docSnap.data());
-            } else {
+            setUserSettings(docSnap.exists() ? docSnap.data() : DEFAULT_USER_SETTINGS);
+            if (!docSnap.exists()) {
                 setDoc(settingsRef, DEFAULT_USER_SETTINGS);
-                setUserSettings(DEFAULT_USER_SETTINGS);
             }
         }, (error) => {
             console.error("Settings loading error:", error);
@@ -895,7 +898,7 @@ export default function App() {
             settingsUnsub();
             tripsUnsub();
         };
-    }, [userId, isAuthComplete]);
+    }, [userId]);
 
     const debouncedSaveSettings = useCallback(
         debounce((newSettings) => {
