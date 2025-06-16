@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, updateDoc, deleteDoc, serverTimestamp, query, orderBy as firestoreOrderBy } from 'firebase/firestore';
 import { Truck, Settings, Plus, DollarSign, CalendarDays, Clock, MapPin, TrendingUp, FileText, ChevronDown, Trash2, Edit3, Save, X, Sun, Moon, UploadCloud, FileScan, Play, ChevronsLeft, ChevronsRight, Loader2, User, AlertTriangle } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
@@ -82,6 +82,34 @@ const debounce = (func, delay) => {
             func.apply(this, args);
         }, delay);
     };
+};
+
+// LocalStorage helper для offline поддержки
+const localStorageHelper = {
+    saveSettings: (userId, settings) => {
+        if (userId) {
+            localStorage.setItem(`truck_settings_${userId}`, JSON.stringify(settings));
+        }
+    },
+    loadSettings: (userId) => {
+        if (userId) {
+            const saved = localStorage.getItem(`truck_settings_${userId}`);
+            return saved ? JSON.parse(saved) : null;
+        }
+        return null;
+    },
+    saveTrips: (userId, trips) => {
+        if (userId) {
+            localStorage.setItem(`truck_trips_${userId}`, JSON.stringify(trips));
+        }
+    },
+    loadTrips: (userId) => {
+        if (userId) {
+            const saved = localStorage.getItem(`truck_trips_${userId}`);
+            return saved ? JSON.parse(saved) : [];
+        }
+        return [];
+    }
 };
 
 // --- ОСНОВНЫЕ КОМПОНЕНТЫ UI (СТИЛИЗОВАННЫЕ) ---
@@ -499,28 +527,3 @@ Return empty array [] if no fuel items found.`;
                     const jsonMatch = responseText.match(/\[[\s\S]*\]/);
                     if (jsonMatch) {
                         parsedResult = JSON.parse(jsonMatch[0]);
-                    } else {
-                        throw new Error("Не удалось извлечь данные из ответа AI");
-                    }
-                }
-
-                if (Array.isArray(parsedResult) && parsedResult.length > 0) {
-                    setOcrResult(parsedResult);
-                    processOcrResult(parsedResult);
-                } else {
-                    throw new Error("Не удалось распознать топливные позиции на чеке. Попробуйте сделать фото четче.");
-                }
-            } else {
-                throw new Error("Не удалось распознать данные. Ответ от AI некорректен.");
-            }
-
-        } catch (err) {
-            console.error(err);
-            setNotification({ message: err.message || 'Произошла неизвестная ошибка при распознавании.', type: 'error' });
-        } finally {
-            setIsLoading(false);
-        }
-    };
-    
-    const processOcrResult = (items) => {
-        let totalAllDieselGallons = 0;
