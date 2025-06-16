@@ -71,6 +71,7 @@ const parseNumericInput = (value) => {
 
 const formatCurrency = (value) => {
     const num = parseNumericInput(value);
+    // Напоминание: мы договорились всегда использовать доллары.
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(num);
 };
 
@@ -830,6 +831,7 @@ export default function App() {
     const [newTripData, setNewTripData] = useState(INITIAL_TRIP_FORM_STATE);
     const [editingTrip, setEditingTrip] = useState(null);
     const [notification, setNotification] = useState({ message: '', type: '', onConfirm: null, onCancel: null });
+    const [tripToDelete, setTripToDelete] = useState(null);
 
     useEffect(() => {
         const root = window.document.documentElement;
@@ -842,7 +844,10 @@ export default function App() {
     }, [theme]);
 
     useEffect(() => {
-        if (!areFirebaseKeysAvailable) return;
+        if (!areFirebaseKeysAvailable) {
+            setIsAuthComplete(true);
+            return;
+        }
 
         return onAuthStateChanged(auth, async (user) => {
             if (user) {
@@ -869,11 +874,10 @@ export default function App() {
         
         const settingsRef = doc(db, `${firestorePathPrefix}/settings`, 'appSettings');
         const settingsUnsub = onSnapshot(settingsRef, (docSnap) => {
-            if (docSnap.exists()) {
-                setUserSettings(docSnap.data());
-            } else {
+            const data = docSnap.exists() ? docSnap.data() : DEFAULT_USER_SETTINGS;
+            setUserSettings(data);
+            if (!docSnap.exists()) {
                 setDoc(settingsRef, DEFAULT_USER_SETTINGS);
-                setUserSettings(DEFAULT_USER_SETTINGS);
             }
         }, (error) => {
             console.error("Settings loading error:", error);
@@ -895,7 +899,7 @@ export default function App() {
             settingsUnsub();
             tripsUnsub();
         };
-    }, [userId, isAuthComplete]);
+    }, [userId]);
 
     const debouncedSaveSettings = useCallback(
         debounce((newSettings) => {
@@ -1085,7 +1089,7 @@ export default function App() {
                         {activeTab === 'entry' && (
                             <div className="space-y-6">
                                 <TripForm onAddTrip={handleAddTrip} tripData={newTripData} setTripData={setNewTripData} />
-                                <PreliminaryCalculation tripData={newTripData} settings={userSettings} />
+                                {userSettings && <PreliminaryCalculation tripData={newTripData} settings={userSettings} />}
                                 <FuelCheckOCR onFuelExpenseUpdate={handleFuelExpenseUpdate} setNotification={setNotification} />
                                 <SettingsAccordion settings={userSettings} onSettingsChange={handleSettingsChange} onCustomExpenseChange={handleCustomExpenseChange}/>
                             </div>
