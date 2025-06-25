@@ -869,11 +869,10 @@ export default function App() {
         
         const settingsRef = doc(db, `${firestorePathPrefix}/settings`, 'appSettings');
         const settingsUnsub = onSnapshot(settingsRef, (docSnap) => {
-            if (docSnap.exists()) {
-                setUserSettings(docSnap.data());
-            } else {
+            const data = docSnap.exists() ? docSnap.data() : DEFAULT_USER_SETTINGS;
+            setUserSettings(data);
+            if (!docSnap.exists()) {
                 setDoc(settingsRef, DEFAULT_USER_SETTINGS);
-                setUserSettings(DEFAULT_USER_SETTINGS);
             }
         }, (error) => {
             console.error("Settings loading error:", error);
@@ -1024,8 +1023,7 @@ export default function App() {
         setNotification({
             message: 'Вы уверены, что хотите удалить эту поездку? Это действие необратимо.',
             type: 'confirm',
-            onConfirm: () => confirmDeleteAction(tripId),
-            onCancel: () => closeNotification()
+            onConfirm: () => confirmDeleteAction(tripId)
         });
     }
 
