@@ -4,28 +4,19 @@ import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken }
 import { getFirestore, doc, setDoc, getDoc, collection, addDoc, onSnapshot, updateDoc, deleteDoc, serverTimestamp, query, orderBy as firestoreOrderBy } from 'firebase/firestore';
 import { Truck, Settings, Plus, DollarSign, CalendarDays, Clock, MapPin, TrendingUp, FileText, ChevronDown, Trash2, Edit3, Save, X, Sun, Moon, UploadCloud, FileScan, Play, ChevronsLeft, ChevronsRight, Loader2, User, AlertTriangle } from 'lucide-react';
 import { AnimatePresence, motion } from 'framer-motion';
-import { format, startOfWeek, endOfWeek, getWeek, parseISO, isValid } from 'date-fns';
+import { format, startOfWeek, endOfWeek, getWeek, parseISO, isValid, startOfDay, endOfDay } from 'date-fns';
 import { ru } from 'date-fns/locale';
 
-// --- НАСТРОЙКИ FIREBASE ---
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID
-};
+// --- Адаптация конфигурации Firebase для среды Canvas ---
+const firebaseConfig = typeof __firebase_config !== 'undefined'
+  ? JSON.parse(__firebase_config)
+  : { projectId: "demo-project" }; // Заглушка, если переменная не найдена
 
-// --- ПРОВЕРКА КЛЮЧЕЙ FIREBASE ---
-const areFirebaseKeysAvailable = 
-    firebaseConfig.apiKey &&
-    firebaseConfig.projectId &&
-    firebaseConfig.appId;
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
-// --- ИНИЦИАЛИЗАЦИЯ FIREBASE (ТОЛЬКО ЕСЛИ КЛЮЧИ ДОСТУПНЫ) ---
+// --- ИНИЦИАЛИЗАЦИЯ FIREBASE ---
 let app, auth, db;
-if (areFirebaseKeysAvailable) {
+if (firebaseConfig.projectId !== "demo-project") {
     app = initializeApp(firebaseConfig);
     auth = getAuth(app);
     db = getFirestore(app);
@@ -97,7 +88,7 @@ const Card = ({ children, className = '', ...props }) => (
     </motion.div>
 );
 
-const InputField = ({ icon: Icon, label, id, type = "text", value, onChange, placeholder, required = false, className = '' }) => (
+const InputField = ({ icon: Icon, label, id, type = "text", value, onChange, placeholder, required = false, className = '', disabled = false }) => (
     <div className={`relative ${className}`}>
         <label htmlFor={id} className="block text-sm font-medium text-slate-600 dark:text-slate-300 mb-1.5">{label}</label>
         <div className="relative">
@@ -109,7 +100,8 @@ const InputField = ({ icon: Icon, label, id, type = "text", value, onChange, pla
                 onChange={onChange}
                 placeholder={placeholder}
                 required={required}
-                className={`w-full ${Icon ? 'pl-10' : 'pl-4'} pr-4 py-2.5 bg-slate-100 dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all duration-300 shadow-inner`}
+                disabled={disabled}
+                className={`w-full ${Icon ? 'pl-10' : 'pl-4'} pr-4 py-2.5 bg-slate-100 dark:bg-slate-900/70 border border-slate-300 dark:border-slate-700 rounded-xl text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 transition-all duration-300 shadow-inner disabled:opacity-60`}
             />
         </div>
     </div>
@@ -174,7 +166,7 @@ const CustomToggle = ({ enabled, onChange }) => (
     </div>
 );
 
-// --- ЛОГИКА РАСЧЕТОВ ---
+// --- ИЗМЕНЕНИЕ: Логика расчета теперь использует расходы, сохраненные в поездке ---
 const calculateTripProfit = (trip, settings) => {
     if (!trip || !settings) return {};
 
@@ -186,12 +178,16 @@ const calculateTripProfit = (trip, settings) => {
     const percentageCharge = tripGross * (parseNumericInput(settings.percentageFromGross) / 100);
     const companyMileCharge = tripMiles * parseNumericInput(settings.ratePerMileCompanyCharge);
     const calculatedCompanyDeductions = rentCharge + percentageCharge + companyMileCharge;
+    
+    // Используем расходы из поездки, если они есть, иначе - из глобальных настроек
+    const standardExpensesList = trip.tripExpenses?.standard || settings.expenses;
+    const customExpensesList = trip.tripExpenses?.custom || settings.customExpenses;
 
-    const standardExpenses = settings.expenses
+    const standardExpenses = standardExpensesList
         ?.filter(e => e.enabled)
         .reduce((acc, curr) => acc + parseNumericInput(curr.amount), 0) || 0;
 
-    const customExpenses = settings.customExpenses
+    const customExpenses = customExpensesList
         ?.filter(e => e.enabled)
         .reduce((acc, curr) => acc + parseNumericInput(curr.amount), 0) || 0;
 
@@ -420,98 +416,7 @@ const FuelCheckOCR = ({ onFuelExpenseUpdate, setNotification }) => {
     };
 
     const handleRecognize = async () => {
-        if (!imageBase64) {
-            setNotification({ message: 'Пожалуйста, сначала загрузите изображение чека.', type: 'error' });
-            return;
-        }
-        setIsLoading(true);
-        setNotification({ message: '' });
-
-        try {
-            const prompt = `КРАЙНЕ ВНИМАТЕЛЬНО проанализируй это изображение чека на топливо. Твоя задача - извлечь информацию о КАЖДОЙ топливной позиции (любой дизель, включая "REEFER FUEL", "TRKDS", "TRK DSL", "AUTO DSL", и DEF/AdBlue). Верни результат СТРОГО в формате JSON массива объектов. Не добавляй никакого текста до или после этого JSON массива. Каждый объект в массиве должен представлять ОДНУ топливную позицию с чека и содержать СЛЕДУЮЩИЕ ТРИ ПОЛЯ: 1. "productName": ТОЧНОЕ название продукта, как оно указано на чеке. 2. "gallons": Количество галлонов для этой ОДНОЙ позиции (число). Если галлоны не указаны, верни 0. 3. "cost": Стоимость для этой ОДНОЙ позиции (число). Если стоимость не указана, верни 0. Если на чеке нет НИ ОДНОЙ топливной позиции, верни пустой массив []. Убедись, что все значения "gallons" и "cost" являются числами. Ответ должен быть ТОЛЬКО JSON массивом.`;
-            
-            const payload = {
-                contents: [{
-                    parts: [
-                        { text: prompt },
-                        { inline_data: { mime_type: "image/jpeg", data: imageBase64 } }
-                    ]
-                }],
-                generation_config: { response_mime_type: "application/json" }
-            };
-            
-            const apiKey = import.meta.env.VITE_GEMINI_API_KEY;
-            if (!apiKey) {
-                throw new Error("API ключ для Gemini не найден. Добавьте VITE_GEMINI_API_KEY в переменные окружения.");
-            }
-            
-            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-
-            const response = await fetch(apiUrl, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
-            });
-            
-            const result = await response.json();
-
-            if (!response.ok) {
-                 console.error("API Error Body:", result);
-                 throw new Error(`Ошибка API: ${result.error?.message || response.statusText}`);
-            }
-
-            if (result.candidates && result.candidates[0].content && result.candidates[0].content.parts.length > 0) {
-                const parsedResult = JSON.parse(result.candidates[0].content.parts[0].text);
-                if (Array.isArray(parsedResult) && parsedResult.length > 0) {
-                   processOcrResult(parsedResult);
-                } else {
-                   throw new Error("Не удалось распознать топливные позиции на чеке. Попробуйте сделать фото четче.");
-                }
-            } else {
-                throw new Error("Не удалось распознать данные. Ответ от AI некорректен.");
-            }
-
-        } catch (err) {
-            console.error(err);
-            setNotification({ message: err.message || 'Произошла неизвестная ошибка при распознавании.', type: 'error' });
-        } finally {
-            setIsLoading(false);
-        }
-    };
-    
-    const processOcrResult = (items) => {
-        let totalAllDieselGallons = 0;
-        let totalAllDieselCostBeforeDiscount = 0;
-        let totalDefCost = 0;
-
-        items.forEach(item => {
-            const productNameLower = (item.productName || '').toLowerCase();
-            const itemGallons = parseNumericInput(item.gallons);
-            const itemCost = parseNumericInput(item.cost);
-            
-            if (ALL_DIESEL_KEYWORDS.some(keyword => productNameLower.includes(keyword))) {
-                totalAllDieselGallons += itemGallons;
-                totalAllDieselCostBeforeDiscount += itemCost;
-            } else if (DEF_KEYWORDS.some(keyword => productNameLower.includes(keyword))) {
-                totalDefCost += itemCost;
-            }
-        });
-        
-        let totalDiscountOnAllDiesel = 0;
-        if(totalAllDieselGallons > 0 && totalAllDieselCostBeforeDiscount > 0){
-             totalDiscountOnAllDiesel = totalAllDieselGallons * DIESEL_DISCOUNT_PER_GALLON;
-        }
-        
-        const finalAllDieselCostAfterDiscount = totalAllDieselCostBeforeDiscount - totalDiscountOnAllDiesel;
-        const finalCombinedExpense = (finalAllDieselCostAfterDiscount > 0 ? finalAllDieselCostAfterDiscount : 0) + totalDefCost;
-        
-        if (finalCombinedExpense > 0) {
-            onFuelExpenseUpdate(finalCombinedExpense);
-            setImageFile(null); 
-            setImageBase64('');
-        } else {
-             setNotification({ message: "Не удалось рассчитать итоговую сумму по чеку. Убедитесь, что на фото видны стоимость и галлоны.", type: 'error' });
-        }
+        setNotification({ message: 'Функция распознавания чеков временно недоступна в этой среде.', type: 'error' });
     };
     
     return (
@@ -595,7 +500,7 @@ const PreliminaryCalculation = ({ tripData, settings }) => {
     );
 };
 
-const OverallSummary = ({ trips }) => {
+const DateRangeSummary = ({ trips, title }) => {
     const summary = useMemo(() => {
         if (!trips || trips.length === 0) {
             return { totalTrips: 0, totalGross: 0, totalMiles: 0, totalProfit: 0, avgRpm: 0, avgProfitPerTrip: 0 };
@@ -618,7 +523,7 @@ const OverallSummary = ({ trips }) => {
     const StatCard = ({ label, value, isCurrency = false, profitColor = false }) => (
         <div className="bg-slate-100 dark:bg-slate-900/70 p-4 rounded-xl flex-1 text-center min-w-[120px]">
             <p className="text-sm text-slate-500 dark:text-slate-400">{label}</p>
-            <p className={`text-xl font-bold ${profitColor ? (value >= 0 ? 'text-green-500' : 'text-red-500') : 'text-slate-800 dark:text-white'}`}>
+            <p className={`text-xl font-bold ${profitColor ? (parseNumericInput(value) >= 0 ? 'text-green-500' : 'text-red-500') : 'text-slate-800 dark:text-white'}`}>
                 {isCurrency ? formatCurrency(value) : (value?.toLocaleString('en-US') || '0')}
             </p>
         </div>
@@ -626,7 +531,7 @@ const OverallSummary = ({ trips }) => {
     
     return (
         <Card>
-            <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-4 flex items-center"><TrendingUp className="mr-2 text-indigo-500 dark:text-indigo-400"/>Общие итоги за все время</h2>
+            <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-4 flex items-center"><TrendingUp className="mr-2 text-indigo-500 dark:text-indigo-400"/>{title}</h2>
             <div className="flex flex-wrap gap-3">
                 <StatCard label="Всего поездок" value={summary.totalTrips} />
                 <StatCard label="Общий Gross" value={summary.totalGross} isCurrency />
@@ -642,8 +547,14 @@ const OverallSummary = ({ trips }) => {
 const TripListItem = ({ trip, onEdit, onDelete }) => {
     const tripDate = parseISO(trip.date);
     const formattedDate = isValid(tripDate) 
-        ? format(tripDate, "d MMMM २०२२ 'г.'", { locale: ru })
+        ? format(tripDate, "d MMMM yyyy 'г.'", { locale: ru })
         : "Неверная дата";
+
+    const rpm = useMemo(() => {
+        const gross = parseNumericInput(trip.tripGross);
+        const miles = parseNumericInput(trip.tripMiles);
+        return miles > 0 ? gross / miles : 0;
+    }, [trip.tripGross, trip.tripMiles]);
 
     return (
         <motion.div
@@ -663,7 +574,7 @@ const TripListItem = ({ trip, onEdit, onDelete }) => {
                     <button onClick={() => onDelete(trip.id)} className="p-2 rounded-full text-red-500 dark:text-red-400 hover:bg-red-500/10 dark:hover:bg-red-500/20 transition-colors"><Trash2 size={18}/></button>
                 </div>
             </div>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-center text-sm">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center text-sm">
                 <div className="bg-slate-200/70 dark:bg-slate-800/50 p-2 rounded-md">
                     <p className="text-xs text-slate-500 dark:text-slate-500">Gross</p>
                     <p className="font-semibold text-slate-800 dark:text-white">{formatCurrency(trip.tripGross)}</p>
@@ -672,9 +583,13 @@ const TripListItem = ({ trip, onEdit, onDelete }) => {
                     <p className="text-xs text-slate-500 dark:text-slate-500">Мили</p>
                     <p className="font-semibold text-slate-800 dark:text-white">{trip.tripMiles}</p>
                 </div>
-                 <div className={`p-2 rounded-md ${trip.calculatedNetProfit >= 0 ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
+                <div className="bg-slate-200/70 dark:bg-slate-800/50 p-2 rounded-md">
+                    <p className="text-xs text-slate-500 dark:text-slate-500">RPM</p>
+                    <p className="font-semibold text-blue-600 dark:text-blue-400">{formatCurrency(rpm)}</p>
+                </div>
+                 <div className={`p-2 rounded-md ${parseNumericInput(trip.calculatedNetProfit) >= 0 ? 'bg-green-500/10' : 'bg-red-500/10'}`}>
                     <p className="text-xs text-slate-500 dark:text-slate-500">Прибыль</p>
-                    <p className={`font-semibold ${trip.calculatedNetProfit >= 0 ? 'text-green-500' : 'text-red-500'}`}>{formatCurrency(trip.calculatedNetProfit)}</p>
+                    <p className={`font-semibold ${parseNumericInput(trip.calculatedNetProfit) >= 0 ? 'text-green-500' : 'text-red-500'}`}>{formatCurrency(trip.calculatedNetProfit)}</p>
                 </div>
             </div>
             {trip.notes && (
@@ -699,6 +614,30 @@ const TripsByPeriod = ({ trips, onEdit, onDelete }) => {
             .sort((a, b) => parseISO(b.date) - parseISO(a.date));
     }, [trips, start, end]);
 
+    const weeklySummary = useMemo(() => {
+        if (!filteredTrips || filteredTrips.length === 0) {
+            return null;
+        }
+        const totalGross = filteredTrips.reduce((sum, trip) => sum + parseNumericInput(trip.tripGross), 0);
+        const totalMiles = filteredTrips.reduce((sum, trip) => sum + parseNumericInput(trip.tripMiles), 0);
+        const totalProfit = filteredTrips.reduce((sum, trip) => sum + parseNumericInput(trip.calculatedNetProfit), 0);
+        return {
+            totalGross,
+            totalMiles,
+            totalProfit,
+            avgRpm: totalMiles > 0 ? totalGross / totalMiles : 0,
+        };
+    }, [filteredTrips]);
+
+    const StatItem = ({ label, value, isCurrency = false, profitColor = false }) => (
+        <div className="bg-slate-200/70 dark:bg-slate-800/50 p-2 rounded-md">
+            <p className="text-xs text-slate-500 dark:text-slate-500">{label}</p>
+            <p className={`font-semibold ${profitColor ? (parseNumericInput(value) >= 0 ? 'text-green-500' : 'text-red-500') : 'text-slate-800 dark:text-white'}`}>
+                {isCurrency ? formatCurrency(value) : (value?.toLocaleString('en-US') || '0')}
+            </p>
+        </div>
+    );
+
     const prevWeek = () => setCurrentDate(new Date(currentDate.getTime() - 7 * 24 * 60 * 60 * 1000));
     const nextWeek = () => setCurrentDate(new Date(currentDate.getTime() + 7 * 24 * 60 * 60 * 1000));
     
@@ -709,10 +648,20 @@ const TripsByPeriod = ({ trips, onEdit, onDelete }) => {
                  <button onClick={prevWeek} className="p-3 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"><ChevronsLeft /></button>
                  <div className="text-center">
                     <p className="font-semibold text-slate-800 dark:text-white">Неделя {getWeek(currentDate, { weekStartsOn: 1 })}</p>
-                    <p className="text-xs text-slate-500 dark:text-slate-400">{format(start, 'd MMM', { locale: ru })} - {format(end, 'd MMM २०२२', { locale: ru })}</p>
+                    <p className="text-xs text-slate-500 dark:text-slate-400">{format(start, 'd MMM', { locale: ru })} - {format(end, 'd MMM yyyy', { locale: ru })}</p>
                  </div>
                  <button onClick={nextWeek} className="p-3 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"><ChevronsRight /></button>
             </div>
+
+            {weeklySummary && (
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mb-4 text-sm">
+                    <StatItem label="Gross Недели" value={weeklySummary.totalGross} isCurrency />
+                    <StatItem label="Мили Недели" value={weeklySummary.totalMiles} />
+                    <StatItem label="RPM Недели" value={weeklySummary.avgRpm} isCurrency />
+                    <StatItem label="Прибыль Недели" value={weeklySummary.totalProfit} isCurrency profitColor />
+                </div>
+            )}
+
             <div className="space-y-4 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
                 <AnimatePresence>
                 {filteredTrips.length > 0 ? (
@@ -726,20 +675,98 @@ const TripsByPeriod = ({ trips, onEdit, onDelete }) => {
     );
 };
 
-const EditTripModal = ({ trip, onSave, onCancel }) => {
+const DateRangePicker = ({ onDateChange, onReset }) => {
+    const [startDate, setStartDate] = useState('');
+    const [endDate, setEndDate] = useState('');
+
+    const handleStartDateChange = (e) => {
+        setStartDate(e.target.value);
+        if (e.target.value && endDate) {
+            onDateChange(e.target.value, endDate);
+        }
+    };
+    
+    const handleEndDateChange = (e) => {
+        setEndDate(e.target.value);
+        if (startDate && e.target.value) {
+            onDateChange(startDate, e.target.value);
+        }
+    };
+
+    const handleReset = () => {
+        setStartDate('');
+        setEndDate('');
+        onReset();
+    };
+
+    return (
+        <Card>
+            <h2 className="text-xl font-bold text-slate-800 dark:text-white mb-4 flex items-center">
+                <CalendarDays className="mr-2 text-green-500 dark:text-green-400"/>
+                Фильтр по дате
+            </h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <InputField 
+                    id="startDate" 
+                    label="С" 
+                    type="date" 
+                    value={startDate} 
+                    onChange={handleStartDateChange} 
+                />
+                <InputField 
+                    id="endDate" 
+                    label="По" 
+                    type="date" 
+                    value={endDate} 
+                    onChange={handleEndDateChange}
+                />
+            </div>
+            {(startDate || endDate) && (
+                <div className="mt-4">
+                    <DestructiveButton onClick={handleReset} icon={X}>Сбросить период</DestructiveButton>
+                </div>
+            )}
+        </Card>
+    );
+};
+
+// --- ИЗМЕНЕНИЕ: Модальное окно редактирования теперь включает расходы ---
+const EditTripModal = ({ trip, onSave, onCancel, settings }) => {
     const [editData, setEditData] = useState(trip);
+    
+    // Инициализируем состояние расходов из поездки или из глобальных настроек для старых поездок
+    const [tripExpenses, setTripExpenses] = useState(
+        trip.tripExpenses || { 
+            standard: settings.expenses.map(e => ({...e})), 
+            custom: settings.customExpenses.map(e => ({...e})) 
+        }
+    );
 
     useEffect(() => {
         setEditData(trip);
-    }, [trip]);
+        setTripExpenses(
+            trip.tripExpenses || { 
+                standard: settings.expenses.map(e => ({...e, amount: 0})), // Для старых поездок расходы по-умолчанию 0
+                custom: settings.customExpenses.map(e => ({...e, amount: 0})) 
+            }
+        );
+    }, [trip, settings]);
 
     const handleChange = (e) => {
         const { id, value } = e.target;
         setEditData(prev => ({ ...prev, [id]: value }));
     };
 
+    const handleExpenseChange = (type, index, value) => {
+        setTripExpenses(prev => {
+            const newExpenses = { ...prev };
+            newExpenses[type][index].amount = value;
+            return newExpenses;
+        });
+    };
+
     const handleSave = () => {
-        onSave(editData);
+        onSave({ ...editData, tripExpenses });
     };
 
     if (!trip) return null;
@@ -770,6 +797,24 @@ const EditTripModal = ({ trip, onSave, onCancel }) => {
                         <InputField id="tripMiles" label="Мили за поездку" type="number" value={editData.tripMiles} onChange={handleChange} required icon={TrendingUp} placeholder="0"/>
                     </div>
                     <TextareaField id="notes" label="Заметки" value={editData.notes} onChange={handleChange} icon={FileText} placeholder="Любая дополнительная информация" />
+                    
+                    <div className="pt-4">
+                        <h3 className="text-lg font-semibold text-slate-700 dark:text-slate-200 mb-3">Расходы за эту поездку</h3>
+                        <div className="space-y-3">
+                            {tripExpenses.standard?.map((expense, index) => (
+                                <div key={`std-${index}`} className="flex items-center justify-between space-x-2">
+                                    <span className="flex-1 text-slate-700 dark:text-slate-300">{expense.name}</span>
+                                    <InputField id={`std-exp-${index}`} label="" type="number" value={expense.amount || ''} onChange={e => handleExpenseChange('standard', index, e.target.value)} className="w-28" placeholder="0.00" disabled={!expense.enabled}/>
+                                </div>
+                            ))}
+                             {tripExpenses.custom?.map((expense, index) => (
+                                <div key={`cst-${index}`} className="flex items-center justify-between space-x-2">
+                                    <span className="flex-1 text-slate-700 dark:text-slate-300">{expense.name}</span>
+                                    <InputField id={`cst-exp-${index}`} label="" type="number" value={expense.amount || ''} onChange={e => handleExpenseChange('custom', index, e.target.value)} className="w-28" placeholder="0.00" disabled={!expense.enabled}/>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
                 </div>
                 <div className="flex justify-end items-center gap-4 mt-8">
                      <button onClick={onCancel} className="px-6 py-2 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">Отмена</button>
@@ -830,6 +875,8 @@ export default function App() {
     const [newTripData, setNewTripData] = useState(INITIAL_TRIP_FORM_STATE);
     const [editingTrip, setEditingTrip] = useState(null);
     const [notification, setNotification] = useState({ message: '', type: '', onConfirm: null, onCancel: null });
+    
+    const [dateRange, setDateRange] = useState({ from: null, to: null });
 
     useEffect(() => {
         const root = window.document.documentElement;
@@ -842,30 +889,39 @@ export default function App() {
     }, [theme]);
 
     useEffect(() => {
-        if (!areFirebaseKeysAvailable) return;
+        if (!db) {
+            setIsAuthComplete(true);
+            return;
+        };
 
-        return onAuthStateChanged(auth, async (user) => {
+        const auth = getAuth(app);
+        const unsubscribe = onAuthStateChanged(auth, async (user) => {
             if (user) {
                 setUserId(user.uid);
             } else {
                 try {
-                    await signInAnonymously(auth);
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(auth);
+                    }
                 } catch (error) {
-                    console.error("Anonymous sign-in error:", error);
-                    setNotification({ message: 'Не удалось войти. Данные не будут сохраняться.', type: 'error' });
+                    console.error("Authentication error:", error);
+                    setNotification({ message: 'Ошибка аутентификации. Данные не будут сохраняться.', type: 'error' });
                 }
             }
             setIsAuthComplete(true);
         });
+        return () => unsubscribe();
     }, []);
 
     useEffect(() => {
-        if (!userId) {
+        if (!userId || !db) {
             if(isAuthComplete) setUserSettings(DEFAULT_USER_SETTINGS);
             return;
         };
 
-        const firestorePathPrefix = `artifacts/${firebaseConfig.projectId}/users/${userId}`;
+        const firestorePathPrefix = `artifacts/${appId}/users/${userId}`;
         
         const settingsRef = doc(db, `${firestorePathPrefix}/settings`, 'appSettings');
         const settingsUnsub = onSnapshot(settingsRef, (docSnap) => {
@@ -894,12 +950,39 @@ export default function App() {
             settingsUnsub();
             tripsUnsub();
         };
-    }, [userId]);
+    }, [userId, isAuthComplete]);
+    
+    const filteredTripsByDate = useMemo(() => {
+        if (!dateRange.from || !dateRange.to) {
+            return trips; 
+        }
+        try {
+            const from = startOfDay(parseISO(dateRange.from));
+            const to = endOfDay(parseISO(dateRange.to));
+
+            if (!isValid(from) || !isValid(to)) return trips;
+
+            return trips.filter(trip => {
+                const tripDate = parseISO(trip.date);
+                return isValid(tripDate) && tripDate >= from && tripDate <= to;
+            });
+        } catch (e) {
+            return trips;
+        }
+    }, [trips, dateRange]);
+
+    const handleDateChange = (startDate, endDate) => {
+        setDateRange({ from: startDate, to: endDate });
+    };
+
+    const handleDateReset = () => {
+        setDateRange({ from: null, to: null });
+    };
 
     const debouncedSaveSettings = useCallback(
         debounce((newSettings) => {
-            if (userId) {
-                const settingsRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/settings`, 'appSettings');
+            if (userId && db) {
+                const settingsRef = doc(db, `artifacts/${appId}/users/${userId}/settings`, 'appSettings');
                 setDoc(settingsRef, newSettings, { merge: true }).catch(err => {
                      console.error("Settings save error:", err);
                      setNotification({ message: 'Не удалось сохранить настройки.', type: 'error' });
@@ -965,9 +1048,22 @@ export default function App() {
             return prevSettings;
         });
     };
+
+    // --- ИЗМЕНЕНИЕ: Функция для сброса расходов ---
+    const resetAllExpenses = () => {
+        setUserSettings(prevSettings => {
+            const newSettings = JSON.parse(JSON.stringify(prevSettings));
+            newSettings.expenses.forEach(exp => exp.amount = 0);
+            if (newSettings.customExpenses) {
+                newSettings.customExpenses.forEach(exp => exp.amount = 0);
+            }
+            debouncedSaveSettings(newSettings);
+            return newSettings;
+        });
+    };
     
     const handleAddTrip = async (tripData) => {
-        if (!userId) {
+        if (!userId || !db) {
              setNotification({ message: 'Вы не авторизованы. Поездка не будет сохранена.', type: 'error' });
              return;
         }
@@ -976,9 +1072,18 @@ export default function App() {
              return;
         }
 
-        const calculatedValues = calculateTripProfit(tripData, userSettings);
+        // --- ИЗМЕНЕНИЕ: Сохраняем "снимок" расходов вместе с поездкой ---
+        const tripExpenses = {
+            standard: userSettings.expenses.map(e => ({...e})),
+            custom: userSettings.customExpenses.map(e => ({...e}))
+        };
+        
+        const tempTripForCalc = {...tripData, tripExpenses};
+        const calculatedValues = calculateTripProfit(tempTripForCalc, userSettings);
+
         const newTrip = {
             ...tripData,
+            tripExpenses,
             ...calculatedValues,
             userId,
             createdAt: serverTimestamp(),
@@ -986,10 +1091,11 @@ export default function App() {
         };
 
         try {
-            const tripsRef = collection(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`);
+            const tripsRef = collection(db, `artifacts/${appId}/users/${userId}/trips`);
             await addDoc(tripsRef, newTrip);
             setNotification({ message: 'Поездка успешно добавлена!', type: 'success' });
             setNewTripData(INITIAL_TRIP_FORM_STATE);
+            resetAllExpenses(); // --- ИЗМЕНЕНИЕ: Сбрасываем расходы после добавления ---
         } catch (error) {
             console.error("Add trip error:", error);
             setNotification({ message: 'Не удалось добавить поездку.', type: 'error' });
@@ -997,7 +1103,7 @@ export default function App() {
     };
     
     const handleUpdateTrip = async (updatedTrip) => {
-        if(!userId || !updatedTrip.id){
+        if(!userId || !updatedTrip.id || !db){
              setNotification({ message: 'Ошибка обновления поездки.', type: 'error' });
              return;
         }
@@ -1009,7 +1115,7 @@ export default function App() {
         };
         
         try {
-            const tripRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`, updatedTrip.id);
+            const tripRef = doc(db, `artifacts/${appId}/users/${userId}/trips`, updatedTrip.id);
             await updateDoc(tripRef, finalTripData);
             setNotification({ message: 'Поездка успешно обновлена!', type: 'success' });
             setEditingTrip(null);
@@ -1029,9 +1135,9 @@ export default function App() {
 
     const confirmDeleteAction = async (tripId) => {
         closeNotification();
-        if (!userId || !tripId) return;
+        if (!userId || !tripId || !db) return;
         try {
-            const tripRef = doc(db, `artifacts/${firebaseConfig.projectId}/users/${userId}/trips`, tripId);
+            const tripRef = doc(db, `artifacts/${appId}/users/${userId}/trips`, tripId);
             await deleteDoc(tripRef);
             setNotification({ message: 'Поездка удалена.', type: 'success' });
         } catch (error) {
@@ -1044,15 +1150,12 @@ export default function App() {
         setNotification({ message: '', type: '' });
     };
     
-    if (!areFirebaseKeysAvailable) {
+    if (!db) {
         return (
-            <div className="min-h-screen bg-red-900 text-white flex flex-col justify-center items-center p-4 text-center">
-                <AlertTriangle className="w-16 h-16 text-yellow-300 mb-4" />
-                <h1 className="text-2xl font-bold mb-2">Критическая Ошибка Конфигурации</h1>
-                <p className="max-w-md">Приложение не может подключиться к базе данных, потому что ключи Firebase не найдены.</p>
-                <p className="mt-4 text-sm text-yellow-200 bg-red-800 p-3 rounded-lg">
-                    <strong>Что делать:</strong> Пожалуйста, вернитесь на сайт Vercel, зайдите в настройки проекта (Settings -> Environment Variables) и убедитесь, что все 6 переменных `VITE_FIREBASE_...` добавлены правильно, без опечаток в именах и значениях.
-                </p>
+            <div className="min-h-screen bg-slate-100 dark:bg-slate-900 flex flex-col justify-center items-center p-4 text-center">
+                <AlertTriangle className="w-16 h-16 text-yellow-500 mb-4" />
+                <h1 className="text-2xl font-bold text-slate-800 dark:text-white mb-2">Ошибка Конфигурации</h1>
+                <p className="max-w-md text-slate-600 dark:text-slate-300">Не удалось подключиться к базе данных. Убедитесь, что среда выполнения настроена правильно.</p>
             </div>
         );
     }
@@ -1061,7 +1164,7 @@ export default function App() {
         return (
             <div className="min-h-screen bg-slate-100 dark:bg-slate-900 flex flex-col justify-center items-center text-slate-800 dark:text-white">
                 <Loader2 className="h-12 w-12 animate-spin text-indigo-500 dark:text-indigo-400 mb-4" />
-                <p className="text-lg">Подключение к сервисам...</p>
+                <p className="text-lg">Подключение и аутентификация...</p>
             </div>
         );
     }
@@ -1091,7 +1194,11 @@ export default function App() {
 
                         {activeTab === 'diary' && (
                             <div className="space-y-6">
-                                <OverallSummary trips={trips}/>
+                                <DateRangePicker onDateChange={handleDateChange} onReset={handleDateReset} />
+                                <DateRangeSummary 
+                                    trips={filteredTripsByDate} 
+                                    title={!dateRange.from ? "Общие итоги за все время" : "Итоги за выбранный период"}
+                                />
                                 <TripsByPeriod trips={trips} onEdit={setEditingTrip} onDelete={handleDeleteTrip}/>
                             </div>
                         )}
@@ -1105,6 +1212,7 @@ export default function App() {
                         trip={editingTrip} 
                         onSave={handleUpdateTrip} 
                         onCancel={() => setEditingTrip(null)}
+                        settings={userSettings}
                     />
                 )}
             </AnimatePresence>
